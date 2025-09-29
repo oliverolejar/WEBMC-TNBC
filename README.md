@@ -103,6 +103,7 @@ macOS/Linux
 >pip install -r requirements.txt
 4) **Quick check (optional):**
 >python -c "import numpy, pandas; print('OK')"  
+
 **If you see errors:**  
 - Confirm `(venv)` is visible in the terminal.  
 - Upgrade pip, then try again:
