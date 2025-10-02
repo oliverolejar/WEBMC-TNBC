@@ -135,4 +135,7 @@ https://www.youtube.com/watch?v=kqtD5dpn9C8
 
 ## Basic Data Science Python Libraries Tutorial
 
-Video Link:
+Video Link (NumPy):  
+https://www.youtube.com/watch?v=pJoYVxgI840  
+
+Video Link ():  
