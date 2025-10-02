@@ -125,3 +125,14 @@ macOS/Linux
 - **`README.md`** → This setup/guide file. Start here when opening the repo.
 - **`requirements.txt`** → The project’s Python libraries **with versions** so everyone installs the same set.
 - **`*.py` files** → Python source code you’ll edit and run.
+
+## TUTORIALS & RESOURCES
+
+## Beginner Python Tutorial
+
+Video Link:  
+https://www.youtube.com/watch?v=kqtD5dpn9C8
+
+## Basic Data Science Python Libraries Tutorial
+
+Video Link:
