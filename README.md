@@ -128,6 +128,14 @@ macOS/Linux
 
 ## TUTORIALS & RESOURCES
 
+## Topics & Concepts to Familiarize Yourself With
+
+- Python Syntax (Variables, Whitespace, Data Types, Loops)
+- Python Functions & Object-Oriented Programming (OOP)
+- Data Science & Machine Learning Libraries (Pandas, Numpy, Matplotlib, Seaborn, Scipy, Scikit-learn)
+- More Advanced AI/ML Libraries (PyTorch & TensorFlow)
+- Git & GitHub (Tree & Branch Structure, Basic Commands, Version Control)
+
 ## Beginner Python Tutorial
 
 Video Link:  
