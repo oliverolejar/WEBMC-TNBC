@@ -150,4 +150,5 @@ https://www.youtube.com/watch?v=kqtD5dpn9C8
 Video Link (NumPy):  
 https://www.youtube.com/watch?v=pJoYVxgI840  
 
-Video Link ():  
+Video Link (Basic Machine Learning):
+https://www.youtube.com/watch?v=29ZQ3TDGgRQ  
