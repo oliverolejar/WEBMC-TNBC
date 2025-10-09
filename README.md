@@ -136,6 +136,10 @@ macOS/Linux
 - More Advanced AI/ML Libraries (PyTorch & TensorFlow)
 - Git & GitHub (Tree & Branch Structure, Basic Commands, Version Control)
 
+## Practice Files
+
+In the subfolder named "practice_notebooks" there are some Jupyter notebooks available. The answers are filled in.
+
 ## Beginner Python Tutorial
 
 Video Link:  
