@@ -6,16 +6,21 @@ try:
     
     df = pd.DataFrame(
         {
-            "var": pd.Series(dtype="string")
+            "Time (ms)": pd.Series(dtype="int"),
+            "Yaw (degrees)": pd.Series(dtype="float"),
+            "Pitch (degrees)": pd.Series(dtype="float"),
+            "Roll (degrees)": pd.Series(dtype="float"),
         }
     )
 
     while (True):
-        line = arduino.readline(100)
+        line = arduino.readline()
         text = line.decode('utf-8').strip()
         print(text)
         
-        df.loc[len(df)] = [text]
+        line_split = text.split(",")
+        
+        df.loc[len(df)] = [int(line_split[0]), float(line_split[1]), float(line_split[2]), float(line_split[3])]
         
 except KeyboardInterrupt:
     df.to_csv('out.csv', index=False)
