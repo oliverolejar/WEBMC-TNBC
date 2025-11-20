@@ -26,7 +26,7 @@ void setup() {
   Algorithm choice will depend on type of motion
 */
   ahrs.setFusionAlgorithm(SensorFusion::MADGWICK);
-
+  ahrs.setBeta(0.01f);                              // changes sensitivity to movement
 
 /*
   Needed if using 9 DOF 
