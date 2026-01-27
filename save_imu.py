@@ -1,5 +1,5 @@
 import asyncio
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 import pandas as pd
 import struct
 from datetime import datetime
@@ -26,8 +26,19 @@ def notification_handler(sender, data):
 async def main():
     """Main function to connect and receive data."""
     print("Scanning for device...")
+
+    def match_uuid(device, adv_data):
+        return KNEE_ANGLE_SERVICE_UUID.lower() in adv_data.service_uuids
+
+    device = await BleakScanner.find_device_by_filter(match_uuid, timeout=10.0)
+
+    if device is None:
+        print(f"Could not find a device with service UUID {KNEE_ANGLE_SERVICE_UUID}")
+        return
+
+    print(f"Found device: {device.name} ({device.address})")
     
-    client = BleakClient(KNEE_ANGLE_SERVICE_UUID)
+    client = BleakClient(device)
 
     try:
         await client.connect()

@@ -26,12 +26,13 @@ BLEFloatCharacteristic kneeAngleCharacteristic(pcKneeAngleCharacteristicUuid, BL
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial);
+  Serial.println("Setup started...");
 
   if (!BLE.begin()) {
     Serial.println("* Starting Bluetooth® Low Energy module failed!");
     while (1);
   }
+  Serial.println("BLE module started.");
 
   // Set name for central's peripheral role (for PC to connect)
   BLE.setLocalName("Nano 33 BLE (KneeAngle)");
@@ -48,18 +49,44 @@ void setup() {
   Serial.println("Advertising to PC and ready to scan for peripherals...");
   Serial.println();
 
+  Serial.println("IMU starting...");
   if ( ! IMU.begin() ){
+    Serial.println("IMU failed to start!");
     while (1);
   }
+  Serial.println("IMU started successfully.");
 
   ahrs.begin();
   ahrs.setDOF(DOF::DOF_9);
   ahrs.setFusionAlgorithm(SensorFusion::MADGWICK);
   ahrs.setBeta(0.01f);
+  
+  Serial.println("Setup complete.");
 }
 
 void loop() {
-  connectToPeripheral();
+  // connectToPeripheral(); // Commented out to isolate PC-Central connection
+
+  // Test code: send local pitch angle to PC
+  BLE.poll(); // Poll for BLE events
+
+  if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable() && IMU.magneticFieldAvailable()) {
+    IMU.readGyroscope(data.gx, data.gy, data.gz);
+    IMU.readAcceleration(data.ax, data.ay, data.az);
+    IMU.readMagneticField(data.mx, data.my, data.mz);
+
+    ahrs.setData(data);
+    ahrs.update();
+    
+    float pitch = ahrs.angles.pitch;
+    kneeAngleCharacteristic.writeValue(pitch);
+
+    // Optional: print to serial for debugging
+    Serial.print("Sent Pitch: ");
+    Serial.println(pitch, 6);
+  }
+
+  delay(100); // Send data roughly 10 times per second
 }
 
 void connectToPeripheral() {
