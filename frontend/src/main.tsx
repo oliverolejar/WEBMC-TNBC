@@ -5,6 +5,8 @@ import './App.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <AppRouter />
+    <div className="min-h-screen bg-slate-50 text-slate-900 antialiased">
+      <AppRouter />
+    </div>
   </React.StrictMode>
 );

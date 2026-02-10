@@ -2,7 +2,19 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import HeaderBar from '../components/HeaderBar';
 import Panel from '../components/Panel';
-import TimeSeriesChartPlaceholder from '../components/TimeSeriesChartPlaceholder';
+import LineChart from '../components/LineChart'; // Changed from TimeSeriesChartPlaceholder
+import { Input } from "@/components/ui/input"; // shadcn/ui Input
+import { Button } from "@/components/ui/button"; // shadcn/ui Button
+
+const mockChartData = [
+  { name: 'Jan', value: 4000 },
+  { name: 'Feb', value: 3000 },
+  { name: 'Mar', value: 2000 },
+  { name: 'Apr', value: 2780 },
+  { name: 'May', value: 1890 },
+  { name: 'Jun', value: 2390 },
+  { name: 'Jul', value: 3490 },
+];
 
 const RecoveryPredict: React.FC = () => {
     const [predictions, setPredictions] = useState({
@@ -22,48 +34,49 @@ const RecoveryPredict: React.FC = () => {
         }));
     };
 
-
   return (
-    <div className="flex flex-col h-screen">
-      <HeaderBar 
-        title="Recovery Predict" 
-        leftAction={<Link to="/" className="text-blue-500">&larr; Back</Link>}
+    <div className="flex flex-col h-screen bg-background">
+      <HeaderBar
+        title="Recovery Prediction"
+        leftAction={
+          <Link to="/">
+            <Button variant="ghost" className="text-primary-foreground hover:bg-primary/90">
+              &larr; Back to Dashboard
+            </Button>
+          </Link>
+        }
       />
-      <main className="flex-grow p-6 grid grid-cols-[1fr_360px] gap-6">
+      <main className="flex-grow p-6 grid grid-cols-1 md:grid-cols-[1fr_360px] gap-6 overflow-auto">
         <div className="flex flex-col gap-6">
-            <Panel>
-                <TimeSeriesChartPlaceholder leftAxisLabel="average knee angle" bottomAxisLabel="time" />
+            <Panel title="Knee Angle Over Time">
+                <LineChart data={mockChartData} dataKey="value" xAxisKey="name" title="Average Knee Angle" />
             </Panel>
-            <Panel>
-                <TimeSeriesChartPlaceholder leftAxisLabel="average knee strength" bottomAxisLabel="time" />
+            <Panel title="Knee Strength Over Time">
+                <LineChart data={mockChartData} dataKey="value" xAxisKey="name" title="Average Knee Strength" />
             </Panel>
         </div>
-        <Panel title="Predicted full recovery">
+        <Panel title="Predicted Full Recovery Dates">
             <div className="flex flex-col gap-6">
-                <div className="p-4 border rounded-md">
-                    <h3 className="font-semibold mb-2">Knee angle</h3>
-                    <div className="flex flex-col gap-2">
-                        <div>
-                            <label htmlFor="kneeAngle-date" className="block text-sm font-medium text-gray-700">date</label>
-                            <input type="text" name="kneeAngle-date" id="kneeAngle-date" value={predictions.kneeAngle.date} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
-                        </div>
-                        <div>
-                            <label htmlFor="kneeAngle-time" className="block text-sm font-medium text-gray-700">time</label>
-                            <input type="text" name="kneeAngle-time" id="kneeAngle-time" value={predictions.kneeAngle.time} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
-                        </div>
+                <div className="space-y-4">
+                    <h3 className="font-semibold text-lg">Knee Angle Recovery</h3>
+                    <div>
+                        <label htmlFor="kneeAngle-date" className="block text-sm font-medium text-muted-foreground mb-1">Date</label>
+                        <Input type="text" name="kneeAngle-date" id="kneeAngle-date" value={predictions.kneeAngle.date} onChange={handleInputChange} />
+                    </div>
+                    <div>
+                        <label htmlFor="kneeAngle-time" className="block text-sm font-medium text-muted-foreground mb-1">Time</label>
+                        <Input type="text" name="kneeAngle-time" id="kneeAngle-time" value={predictions.kneeAngle.time} onChange={handleInputChange} />
                     </div>
                 </div>
-                 <div className="p-4 border rounded-md">
-                    <h3 className="font-semibold mb-2">Knee strength</h3>
-                    <div className="flex flex-col gap-2">
-                        <div>
-                            <label htmlFor="kneeStrength-date" className="block text-sm font-medium text-gray-700">date</label>
-                            <input type="text" name="kneeStrength-date" id="kneeStrength-date" value={predictions.kneeStrength.date} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
-                        </div>
-                        <div>
-                            <label htmlFor="kneeStrength-time" className="block text-sm font-medium text-gray-700">time</label>
-                            <input type="text" name="kneeStrength-time" id="kneeStrength-time" value={predictions.kneeStrength.time} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
-                        </div>
+                 <div className="space-y-4">
+                    <h3 className="font-semibold text-lg">Knee Strength Recovery</h3>
+                    <div>
+                        <label htmlFor="kneeStrength-date" className="block text-sm font-medium text-muted-foreground mb-1">Date</label>
+                        <Input type="text" name="kneeStrength-date" id="kneeStrength-date" value={predictions.kneeStrength.date} onChange={handleInputChange} />
+                    </div>
+                    <div>
+                        <label htmlFor="kneeStrength-time" className="block text-sm font-medium text-muted-foreground mb-1">Time</label>
+                        <Input type="text" name="kneeStrength-time" id="kneeStrength-time" value={predictions.kneeStrength.time} onChange={handleInputChange} />
                     </div>
                 </div>
             </div>

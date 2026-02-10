@@ -1,28 +1,41 @@
 import React from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
+  description?: string; // Added description prop for DialogDescription
   children: React.ReactNode;
-  footer: React.ReactNode;
+  footer?: React.ReactNode; // Made footer optional
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer }) => {
-  return isOpen ? ( // Conditionally render the entire modal structure
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-        <div className="p-4 border-b">
-          <h2 className="text-xl font-bold">{title}</h2>
-          <button onClick={onClose} className="absolute top-4 right-4">X</button>
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, description, children, footer }) => {
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          {description && <DialogDescription>{description}</DialogDescription>}
+        </DialogHeader>
+        <div className="py-4">
+          {children}
         </div>
-        <div className="p-4">{children}</div>
-        <div className="p-4 border-t flex justify-end gap-2">
-          {footer}
-        </div>
-      </div>
-    </div>
-  ) : null; // Render null if not open
+        {footer && (
+          <DialogFooter>
+            {footer}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 };
 
 export default Modal;
