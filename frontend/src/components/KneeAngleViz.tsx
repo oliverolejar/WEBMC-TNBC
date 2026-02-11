@@ -16,13 +16,19 @@ interface KneeAngleVizProps {
 
 const KneeAngleViz: React.FC<KneeAngleVizProps> = ({ ypr }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [currentKneeAngle, setCurrentKneeAngle] = useState(90);
+  // Use ypr.p if available, otherwise fallback to animation
+  const [currentKneeAngle, setCurrentKneeAngle] = useState(ypr?.p ? 180 - ypr.p : 90);
 
   const animationRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
   const angleDirectionRef = useRef<1 | -1>(1);
 
   useEffect(() => {
+    if (ypr?.p !== undefined) {
+      setCurrentKneeAngle(180 - ypr.p); // Map pitch to a knee bend angle
+      return; // If ypr is provided, stop animation logic
+    }
+
     const animate = (time: DOMHighResTimeStamp) => {
       if (!lastTimeRef.current) {
         lastTimeRef.current = time;
@@ -34,6 +40,7 @@ const KneeAngleViz: React.FC<KneeAngleVizProps> = ({ ypr }) => {
       setCurrentKneeAngle(prevAngle => {
         let newAngle = prevAngle + angleDirectionRef.current * animationSpeed * deltaTime;
 
+        // Ensure angle stays within a reasonable range (e.g., 90 to 180 for illustrative bend)
         if (newAngle >= 180) {
           newAngle = 180;
           angleDirectionRef.current = -1;
@@ -52,8 +59,7 @@ const KneeAngleViz: React.FC<KneeAngleVizProps> = ({ ypr }) => {
     return () => {
       cancelAnimationFrame(animationRef.current);
     };
-  }, [setCurrentKneeAngle]);
-
+  }, [ypr?.p, setCurrentKneeAngle]); // Re-run effect if ypr.p changes
 
   const viewBoxWidth = 320;
   const viewBoxHeight = 220;
@@ -62,53 +68,40 @@ const KneeAngleViz: React.FC<KneeAngleVizProps> = ({ ypr }) => {
   const tibiaLength = 80;
   const jointRadius = 6;
 
-  const knee = {
-    x: hip.x + femurLength * Math.sin(Math.PI / 6),
-    y: hip.y + femurLength * Math.cos(Math.PI / 6),
-  };
+  // Calculate knee position based on hip and femur
+  const femurAngle = 30; // degrees from vertical
+  const knee = rotatePoint(hip.x, hip.y + femurLength, hip.x, hip.y, -femurAngle);
 
-  const femurAngleFromXAxis = Math.PI / 2 - Math.PI / 6;
+  // Calculate ankle position based on knee and tibia
+  // currentKneeAngle is assumed to be the internal angle of the knee joint (e.g., 180 for straight, 90 for bent)
+  const tibiaBaseAngle = femurAngle; // angle of femur from vertical
+  const tibiaRotation = 180 - currentKneeAngle; // relative rotation of tibia to femur
 
-  const tibiaRelativeAngle = (180 - currentKneeAngle) * Math.PI / 180;
+  const ankle = rotatePoint(knee.x, knee.y + tibiaLength, knee.x, knee.y, tibiaBaseAngle + tibiaRotation);
 
-  const ankleX = knee.x + tibiaLength * Math.cos(femurAngleFromXAxis + tibiaRelativeAngle);
-  const ankleY = knee.y + tibiaLength * Math.sin(femurAngleFromXAxis + tibiaRelativeAngle);
-
-  const clampedAnkleX = Math.max(jointRadius, Math.min(viewBoxWidth - jointRadius, ankleX));
-  const clampedAnkleY = Math.max(jointRadius, Math.min(viewBoxHeight - jointRadius, ankleY));
+  // Clamp ankle position to ensure it stays within bounds
+  const clampedAnkleX = Math.max(jointRadius, Math.min(viewBoxWidth - jointRadius, ankle.x));
+  const clampedAnkleY = Math.max(jointRadius, Math.min(viewBoxHeight - jointRadius, ankle.y));
 
   const points = `${hip.x},${hip.y} ${knee.x},${knee.y} ${clampedAnkleX},${clampedAnkleY}`;
 
   return (
-    <div className="w-full h-full flex items-center justify-center p-2">
+    <div className="w-full h-full flex items-center justify-center p-2 bg-transparent"> {/* Changed to bg-transparent */}
       <svg ref={svgRef} viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} className="w-full h-full max-w-full max-h-full">
-        {/* Background */}
-        <rect x="0" y="0" width={viewBoxWidth} height={viewBoxHeight}
-              fill="lightgray" stroke="darkgray" strokeWidth="1"/>
-
         {/* Leg Segments */}
         <polyline points={points}
-                  stroke="black" strokeWidth="4" fill="none"
+                  stroke="hsl(var(--foreground))" strokeWidth="4" fill="none" // Use foreground color
                   strokeLinecap="round" strokeLinejoin="round"/>
 
         {/* Joints */}
-        <circle cx={hip.x} cy={hip.y} r={jointRadius} fill="red"/>
-        <circle cx={knee.x} cy={knee.y} r={jointRadius} fill="red"/>
-        <circle cx={clampedAnkleX} cy={clampedAnkleY} r={jointRadius} fill="red"/>
+        <circle cx={hip.x} cy={hip.y} r={jointRadius} fill="hsl(var(--primary))"/> {/* Use primary color */}
+        <circle cx={knee.x} cy={knee.y} r={jointRadius} fill="hsl(var(--primary))"/> {/* Use primary color */}
+        <circle cx={clampedAnkleX} cy={clampedAnkleY} r={jointRadius} fill="hsl(var(--primary))"/> {/* Use primary color */}
 
-        {/* Text Labels */}
-        <text x={viewBoxWidth - 10} y="20" textAnchor="end" fontSize="14" fill="blue">
+        {/* Text Labels (Moved to parent LiveDashboard for "large current angle readout") */}
+        {/* <text x={viewBoxWidth - 10} y="20" textAnchor="end" fontSize="14" fill="hsl(var(--foreground))">
           Knee Angle: {currentKneeAngle.toFixed(0)}°
-        </text>
-        <text x={viewBoxWidth - 10} y={viewBoxHeight - 60} textAnchor="end" fontSize="12" fill="blue">
-          Y: {ypr?.y?.toFixed(1) || '0.0'}
-        </text>
-        <text x={viewBoxWidth - 10} y={viewBoxHeight - 40} textAnchor="end" fontSize="12" fill="blue">
-          P: {ypr?.p?.toFixed(1) || '0.0'}
-        </text>
-        <text x={viewBoxWidth - 10} y={viewBoxHeight - 20} textAnchor="end" fontSize="12" fill="blue">
-          R: {ypr?.r?.toFixed(1) || '0.0'}
-        </text>
+        </text> */}
       </svg>
     </div>
   );

@@ -14,7 +14,7 @@ interface LineChartProps {
   data: any[];
   dataKey: string;
   xAxisKey: string;
-  title?: string;
+  // title?: string; // Removed title prop
   lineColor?: string;
 }
 
@@ -22,31 +22,30 @@ const LineChart: React.FC<LineChartProps> = ({
   data,
   dataKey,
   xAxisKey,
-  title,
+  // title, // Removed title prop
   lineColor = 'hsl(var(--primary))'
 }) => {
   return (
-    <div className="w-full h-full p-4 bg-card text-card-foreground rounded-lg shadow-sm">
-      {title && <h3 className="text-lg font-semibold mb-4">{title}</h3>}
-      <ResponsiveContainer width="100%" height={300}>
-        <RechartsLineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted))" />
-          <XAxis dataKey={xAxisKey} stroke="hsl(var(--foreground))" />
-          <YAxis stroke="hsl(var(--foreground))" />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: 'hsl(var(--popover))',
-              borderColor: 'hsl(var(--border))',
-              color: 'hsl(var(--popover-foreground))'
-            }}
-            labelStyle={{ color: 'hsl(var(--foreground))' }}
-            itemStyle={{ color: 'hsl(var(--primary))' }}
-          />
-          <Legend />
-          <Line type="monotone" dataKey={dataKey} stroke={lineColor} activeDot={{ r: 8 }} />
-        </RechartsLineChart>
-      </ResponsiveContainer>
-    </div>
+    <ResponsiveContainer width="100%" height={300}>
+      <RechartsLineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--muted)" vertical={false} />
+        <XAxis dataKey={xAxisKey} stroke="var(--muted-foreground)" fontSize={12} tickLine={false} axisLine={false} />
+        <YAxis stroke="var(--muted-foreground)" fontSize={12} tickLine={false} axisLine={false} />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: 'var(--popover)',
+            borderColor: 'var(--border)',
+            color: 'var(--popover-foreground)',
+            borderRadius: 'var(--radius)',
+            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+          }}
+          labelStyle={{ color: 'var(--foreground)' }}
+          itemStyle={{ color: 'var(--primary)' }}
+        />
+        <Legend />
+        <Line type="monotone" dataKey={dataKey} stroke={lineColor.startsWith('hsl') ? lineColor : `var(--primary)`} strokeWidth={2} activeDot={{ r: 6, strokeWidth: 0 }} dot={false} />
+      </RechartsLineChart>
+    </ResponsiveContainer>
   );
 };
 
