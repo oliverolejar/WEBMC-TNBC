@@ -1,0 +1,2 @@
+Patient_ID,Week_Post_Op,Healthy_ROM,Injured_ROM,Healthy_Quad,Injured_Quad,Healthy_Ham,Injured_Ham,LSI_ROM,LSI_Quad,LSI_Hamstring,Predicted_Recovery_Percent,Recovery_Status
+1001,12,180.0,150.0,1.0,0.75,0.6,0.42,0.8333333333333334,0.75,0.7,77.6,Good Progress
