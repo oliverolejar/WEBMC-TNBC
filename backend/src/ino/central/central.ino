@@ -26,7 +26,9 @@ BLEFloatCharacteristic kneeAngleCharacteristic(pcKneeAngleCharacteristicUuid, BL
 
 void setup() {
   Serial.begin(115200);
+  while (!Serial && millis() < 5000) {}
   Serial.println("Setup started...");
+  Serial.println("BOOT: central setup entered");
 
   if (!BLE.begin()) {
     Serial.println("* Starting Bluetooth® Low Energy module failed!");
@@ -57,7 +59,7 @@ void setup() {
   Serial.println("IMU started successfully.");
 
   ahrs.begin();
-  ahrs.setDOF(DOF::DOF_9);
+  ahrs.setDOF(DOF::DOF_6);
   ahrs.setFusionAlgorithm(SensorFusion::MADGWICK);
   ahrs.setBeta(0.01f);
   
@@ -65,15 +67,15 @@ void setup() {
 }
 
 void loop() {
-  // connectToPeripheral(); // Commented out to isolate PC-Central connection
+  connectToPeripheral(); // Re-enabled for central->peripheral connection testing
 
   // Test code: send local pitch angle to PC
   BLE.poll(); // Poll for BLE events
 
-  if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable() && IMU.magneticFieldAvailable()) {
+  if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable() /* && IMU.magneticFieldAvailable() */ ) {
     IMU.readGyroscope(data.gx, data.gy, data.gz);
     IMU.readAcceleration(data.ax, data.ay, data.az);
-    IMU.readMagneticField(data.mx, data.my, data.mz);
+    // IMU.readMagneticField(data.mx, data.my, data.mz);
 
     ahrs.setData(data);
     ahrs.update();
@@ -136,21 +138,31 @@ void controlPeripheral(BLEDevice peripheral) {
   }
 
   if (imuCharacteristic.canSubscribe()) {
-    imuCharacteristic.subscribe();
-    Serial.println("* Subscribed to IMU characteristic notifications.");
+    bool subscribed = imuCharacteristic.subscribe();
+    if (subscribed) {
+      Serial.println("* Subscribed to IMU characteristic notifications.");
+    } else {
+      Serial.println("* Failed to subscribe to IMU characteristic notifications.");
+    }
+  } else {
+    Serial.println("* IMU characteristic does not support notifications.");
   }
   
   float lastPitchA = 0.0f;
+  float lastKneeAngle = 0.0f;
+  unsigned long packetsReceived = 0;
+  unsigned long lastPacketMs = 0;
+  unsigned long lastDebugMs = 0;
 
   while (peripheral.connected()) {
     // Poll for BLE events from both peripheral and central (PC) connections
     BLE.poll();
 
     // ---- A: local IMU on central ----
-    if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable() && IMU.magneticFieldAvailable()) {
+    if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable() /* && IMU.magneticFieldAvailable() */ ) {
       IMU.readGyroscope(data.gx, data.gy, data.gz);
       IMU.readAcceleration(data.ax, data.ay, data.az);
-      IMU.readMagneticField(data.mx, data.my, data.mz);
+      // IMU.readMagneticField(data.mx, data.my, data.mz);
 
       ahrs.setData(data);
       ahrs.update();
@@ -167,6 +179,9 @@ void controlPeripheral(BLEDevice peripheral) {
         
         // ---- Knee ROM: A - B on pitch ----
         float kneeAngle = lastPitchA - packetB.pitch;
+        lastKneeAngle = kneeAngle;
+        packetsReceived++;
+        lastPacketMs = millis();
 
         // Send the calculated angle to the connected PC
         kneeAngleCharacteristic.writeValue(kneeAngle);
@@ -175,6 +190,21 @@ void controlPeripheral(BLEDevice peripheral) {
         Serial.print("Knee Angle: ");
         Serial.println(kneeAngle, 6);
       }
+    }
+
+    unsigned long now = millis();
+    if (now - lastDebugMs >= 1000) {
+      Serial.print("debug packets=");
+      Serial.print(packetsReceived);
+      Serial.print(" last_packet_ms_ago=");
+      if (lastPacketMs == 0) {
+        Serial.print(-1);
+      } else {
+        Serial.print(now - lastPacketMs);
+      }
+      Serial.print(" last_knee=");
+      Serial.println(lastKneeAngle, 6);
+      lastDebugMs = now;
     }
   }
 

@@ -25,7 +25,7 @@ SensorData data = {};
 void setup() {
 
   Serial.begin(115200);
-  while (!Serial);
+  while (!Serial && millis() < 5000) {}
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
@@ -64,7 +64,7 @@ void setup() {
 /*
   Needed if we are using magnetometer (6 DOF vs 9 DOF)
 */
-  ahrs.setDOF(DOF::DOF_9);
+  ahrs.setDOF(DOF::DOF_6);
 
 
 /*
@@ -102,10 +102,10 @@ void loop() {
 
       uint32_t t = millis();
 
-      if ( IMU.gyroscopeAvailable() && IMU.accelerationAvailable() && IMU.magneticFieldAvailable() ){
+      if ( IMU.gyroscopeAvailable() && IMU.accelerationAvailable() /* && IMU.magneticFieldAvailable() */ ){
         IMU.readGyroscope(data.gx, data.gy, data.gz);
         IMU.readAcceleration(data.ax, data.ay, data.az);
-        IMU.readMagneticField(data.mx, data.my, data.mz);
+        // IMU.readMagneticField(data.mx, data.my, data.mz);
 
         ahrs.setData(data);
         ahrs.update();

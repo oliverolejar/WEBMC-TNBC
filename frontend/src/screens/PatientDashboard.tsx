@@ -14,29 +14,25 @@ const PatientDashboard = () => {
     const [kneeAngle, setKneeAngle] = useState(0);
     const [emgData, setEmgData] = useState<{ time: number; value: number }[]>([]);
 
-    // Simulate Live Data
     useEffect(() => {
-        const interval = setInterval(() => {
-            const time = Date.now();
+        const ws = new WebSocket("ws://127.0.0.1:8000/ws/knee-angle");
 
-            // Simulating Knee Flexion/Extension (Sine wave)
-            setKneeAngle(45 + 40 * Math.sin(time / 1000));
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (typeof data.knee_angle_deg === "number") {
+                setKneeAngle(data.knee_angle_deg);
+            }
+        };
 
-            // Simulating EMG (Noise + Activity burts aligned with movement)
-            const baseActivity = Math.random() * 10;
-            const burst = Math.abs(Math.sin(time / 1000)) > 0.8 ? Math.random() * 80 : 0;
-            const newValue = baseActivity + burst;
+        ws.onerror = (err) => {
+            console.error("WebSocket error:", err);
+        };
 
-            setEmgData(prev => {
-                const newData = [...prev, { time, value: newValue }];
-                if (newData.length > 50) return newData.slice(newData.length - 50);
-                return newData;
-            });
-
-        }, 50); // 20Hz update
-
-        return () => clearInterval(interval);
+        return () => {
+            ws.close();
+        };
     }, []);
+
 
     return (
         <div className="min-h-screen bg-slate-50 p-6 flex flex-col">
