@@ -12,15 +12,22 @@ const PatientDashboard = () => {
 
     // Live Data State
     const [kneeAngle, setKneeAngle] = useState(0);
-    const [emgData, setEmgData] = useState<{ time: number; value: number }[]>([]);
+    const [deviceConnected, setDeviceConnected] = useState(false);
+    const [emgData] = useState<{ time: number; value: number }[]>([]);
 
     useEffect(() => {
-        const ws = new WebSocket("ws://127.0.0.1:8000/ws/knee-angle");
+        const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws/knee-angle`);
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (typeof data.knee_angle_deg === "number") {
                 setKneeAngle(data.knee_angle_deg);
+            }
+            // Prefer stream payload status when available.
+            if (typeof data.device_connected === "boolean") {
+                setDeviceConnected(data.device_connected);
+            } else {
+                setDeviceConnected(true);
             }
         };
 
@@ -30,6 +37,34 @@ const PatientDashboard = () => {
 
         return () => {
             ws.close();
+        };
+    }, []);
+
+    useEffect(() => {
+        let isMounted = true;
+        const apiBase = `http://${window.location.hostname}:8000`;
+
+        const refreshHealth = async () => {
+            try {
+                const response = await fetch(`${apiBase}/health`);
+                if (!response.ok) {
+                    throw new Error(`Health check failed: ${response.status}`);
+                }
+                const data: { device_connected?: boolean } = await response.json();
+                if (isMounted) {
+                    setDeviceConnected(!!data.device_connected);
+                }
+            } catch {
+                // Keep the last known connection state; websocket samples are authoritative.
+            }
+        };
+
+        refreshHealth();
+        const intervalId = setInterval(refreshHealth, 1000);
+
+        return () => {
+            isMounted = false;
+            clearInterval(intervalId);
         };
     }, []);
 
@@ -79,10 +114,17 @@ const PatientDashboard = () => {
                 </div>
 
                 <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-medium border border-emerald-100">
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Device Connected
-                    </div>
+                    {deviceConnected ? (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-medium border border-emerald-100">
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                            Device Connected
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium border border-slate-200">
+                            <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+                            Device Disconnected
+                        </div>
+                    )}
                     <div className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-700 rounded-lg text-sm font-medium border border-red-100">
                         <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
                         Recording Data
@@ -100,7 +142,7 @@ const PatientDashboard = () => {
                                 side="Right"
                                 label=""
                                 angle={kneeAngle}
-                                isConnected={true}
+                                isConnected={deviceConnected}
                             />
                         </div>
 
@@ -109,7 +151,7 @@ const PatientDashboard = () => {
                             <EMGChart
                                 label=""
                                 data={emgData}
-                                isConnected={true}
+                                isConnected={deviceConnected}
                                 color="#6d28d9"
                                 currentValue={emgData.length > 0 ? emgData[emgData.length - 1].value : 0}
                             />
