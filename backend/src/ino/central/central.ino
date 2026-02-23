@@ -19,10 +19,39 @@ struct IMUPacket {
 
 ReefwingAHRS ahrs;
 SensorData data = {};
+float gxOffset = 0.0f;
+float gyOffset = 0.0f;
+float gzOffset = 0.0f;
+const int GYRO_CALIBRATION_SAMPLES = 500;
+const float KNEE_EMA_ALPHA = 0.2f;
 
 // PC Service
 BLEService pcService(pcServiceUuid);
 BLEFloatCharacteristic kneeAngleCharacteristic(pcKneeAngleCharacteristicUuid, BLERead | BLENotify);
+
+void calibrateGyro() {
+  float gx = 0.0f;
+  float gy = 0.0f;
+  float gz = 0.0f;
+  gxOffset = 0.0f;
+  gyOffset = 0.0f;
+  gzOffset = 0.0f;
+
+  Serial.println("Calibrating gyro: keep central still...");
+  for (int i = 0; i < GYRO_CALIBRATION_SAMPLES; i++) {
+    while (!IMU.gyroscopeAvailable()) {}
+    IMU.readGyroscope(gx, gy, gz);
+    gxOffset += gx;
+    gyOffset += gy;
+    gzOffset += gz;
+    delay(5);
+  }
+
+  gxOffset /= GYRO_CALIBRATION_SAMPLES;
+  gyOffset /= GYRO_CALIBRATION_SAMPLES;
+  gzOffset /= GYRO_CALIBRATION_SAMPLES;
+  Serial.println("Gyro calibration complete.");
+}
 
 void setup() {
   Serial.begin(115200);
@@ -57,6 +86,7 @@ void setup() {
     while (1);
   }
   Serial.println("IMU started successfully.");
+  calibrateGyro();
 
   ahrs.begin();
   ahrs.setDOF(DOF::DOF_6);
@@ -74,6 +104,9 @@ void loop() {
 
   if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable() /* && IMU.magneticFieldAvailable() */ ) {
     IMU.readGyroscope(data.gx, data.gy, data.gz);
+    data.gx -= gxOffset;
+    data.gy -= gyOffset;
+    data.gz -= gzOffset;
     IMU.readAcceleration(data.ax, data.ay, data.az);
     // IMU.readMagneticField(data.mx, data.my, data.mz);
 
@@ -150,6 +183,8 @@ void controlPeripheral(BLEDevice peripheral) {
   
   float lastPitchA = 0.0f;
   float lastKneeAngle = 0.0f;
+  bool hasFilteredKnee = false;
+  float filteredKneeAngle = 0.0f;
   unsigned long packetsReceived = 0;
   unsigned long lastPacketMs = 0;
   unsigned long lastDebugMs = 0;
@@ -161,6 +196,9 @@ void controlPeripheral(BLEDevice peripheral) {
     // ---- A: local IMU on central ----
     if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable() /* && IMU.magneticFieldAvailable() */ ) {
       IMU.readGyroscope(data.gx, data.gy, data.gz);
+      data.gx -= gxOffset;
+      data.gy -= gyOffset;
+      data.gz -= gzOffset;
       IMU.readAcceleration(data.ax, data.ay, data.az);
       // IMU.readMagneticField(data.mx, data.my, data.mz);
 
@@ -179,16 +217,23 @@ void controlPeripheral(BLEDevice peripheral) {
         
         // ---- Knee ROM: A - B on pitch ----
         float kneeAngle = lastPitchA - packetB.pitch;
-        lastKneeAngle = kneeAngle;
+        if (!hasFilteredKnee) {
+          filteredKneeAngle = kneeAngle;
+          hasFilteredKnee = true;
+        } else {
+          filteredKneeAngle =
+            (1.0f - KNEE_EMA_ALPHA) * filteredKneeAngle + KNEE_EMA_ALPHA * kneeAngle;
+        }
+        lastKneeAngle = filteredKneeAngle;
         packetsReceived++;
         lastPacketMs = millis();
 
         // Send the calculated angle to the connected PC
-        kneeAngleCharacteristic.writeValue(kneeAngle);
+        kneeAngleCharacteristic.writeValue(filteredKneeAngle);
 
         // Optional: print to serial for debugging
         Serial.print("Knee Angle: ");
-        Serial.println(kneeAngle, 6);
+        Serial.println(filteredKneeAngle, 6);
       }
     }
 
