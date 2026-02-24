@@ -58,15 +58,23 @@ def stop_session():
 
     with output_path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["timestamp", "knee_angle_deg"])
+        writer.writerow(["timestamp", "device_timestamp_ms", "knee_angle_deg"])
         for sample in rows:
-            writer.writerow([sample.timestamp, sample.knee_angle_deg])
+            writer.writerow([sample.timestamp, sample.device_timestamp_ms, sample.knee_angle_deg])
 
     return {"saved_to": str(output_path), "rows": len(rows)}
 
 def notification_handler(sender, data):
-    knee_angle = struct.unpack("<f", data)[0]
-    imu_service.ingest_sample(knee_angle)
+    # Preferred payload from central Arduino: uint32 timestamp + float knee angle
+    if len(data) >= 8:
+        device_timestamp_ms, knee_angle = struct.unpack("<If", data[:8])
+        imu_service.ingest_sample(knee_angle, device_timestamp_ms=device_timestamp_ms)
+        return
+
+    # Backward compatibility with legacy float-only payload
+    if len(data) >= 4:
+        knee_angle = struct.unpack("<f", data[:4])[0]
+        imu_service.ingest_sample(knee_angle, device_timestamp_ms=0)
 
 async def ble_loop():
     while True:

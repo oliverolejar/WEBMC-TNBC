@@ -17,6 +17,11 @@ struct IMUPacket {
   float roll;
 };
 
+struct KneePacket {
+  uint32_t t;
+  float kneeAngle;
+};
+
 ReefwingAHRS ahrs;
 SensorData data = {};
 float gxOffset = 0.0f;
@@ -27,7 +32,11 @@ const float KNEE_EMA_ALPHA = 0.2f;
 
 // PC Service
 BLEService pcService(pcServiceUuid);
-BLEFloatCharacteristic kneeAngleCharacteristic(pcKneeAngleCharacteristicUuid, BLERead | BLENotify);
+BLECharacteristic kneeAngleCharacteristic(
+  pcKneeAngleCharacteristicUuid,
+  BLERead | BLENotify,
+  sizeof(KneePacket)
+);
 
 void calibrateGyro() {
   float gx = 0.0f;
@@ -89,7 +98,8 @@ void setup() {
   BLE.setAdvertisedService(pcService);
   pcService.addCharacteristic(kneeAngleCharacteristic);
   BLE.addService(pcService);
-  kneeAngleCharacteristic.writeValue(0.0f); // initial value
+  KneePacket initPacket = {0, 0.0f};
+  kneeAngleCharacteristic.writeValue((const uint8_t*)&initPacket, sizeof(KneePacket)); // initial value
   
   BLE.advertise();
 
@@ -131,7 +141,8 @@ void loop() {
     ahrs.update();
     
     float pitch = ahrs.angles.pitch;
-    kneeAngleCharacteristic.writeValue(pitch);
+    KneePacket packet = {millis(), pitch};
+    kneeAngleCharacteristic.writeValue((const uint8_t*)&packet, sizeof(KneePacket));
 
     // Optional: print to serial for debugging
     Serial.print("Sent Pitch: ");
@@ -243,8 +254,9 @@ void controlPeripheral(BLEDevice peripheral) {
         packetsReceived++;
         lastPacketMs = millis();
 
-        // Send the calculated angle to the connected PC
-        kneeAngleCharacteristic.writeValue(filteredKneeAngle);
+        // Send timestamp + knee angle to the connected PC
+        KneePacket packetOut = {millis(), filteredKneeAngle};
+        kneeAngleCharacteristic.writeValue((const uint8_t*)&packetOut, sizeof(KneePacket));
 
         // Optional: print to serial for debugging
         Serial.print("Knee Angle: ");

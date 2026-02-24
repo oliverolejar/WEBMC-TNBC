@@ -5,6 +5,7 @@ from typing import Optional
 @dataclass
 class KneeSample:
     timestamp: str
+    device_timestamp_ms: int
     knee_angle_deg: float
 
 class ImuStreamService:
@@ -17,9 +18,13 @@ class ImuStreamService:
     def set_connected(self, connected):
         self.device_connected = connected
 
-    def ingest_sample(self, knee_angle_deg):
+    def ingest_sample(self, knee_angle_deg, device_timestamp_ms=0):
         ts = datetime.now(timezone.utc).isoformat()
-        sample = KneeSample(timestamp=ts, knee_angle_deg=knee_angle_deg)
+        sample = KneeSample(
+            timestamp=ts,
+            device_timestamp_ms=int(device_timestamp_ms),
+            knee_angle_deg=knee_angle_deg
+        )
 
         self.latest_sample = sample
 
@@ -39,6 +44,7 @@ class ImuStreamService:
     def latest_dict(self):
         return {
             "timestamp": self.latest_sample.timestamp if self.latest_sample else None,
+            "device_timestamp_ms": self.latest_sample.device_timestamp_ms if self.latest_sample else None,
             "knee_angle_deg": self.latest_sample.knee_angle_deg if self.latest_sample else None,
             "device_connected": self.device_connected,
             "recording": self.recording,
