@@ -33,23 +33,40 @@ void calibrateGyro() {
   float gx = 0.0f;
   float gy = 0.0f;
   float gz = 0.0f;
+  int collected = 0;
+  const unsigned long gyroWaitTimeoutMs = 3000;
   gxOffset = 0.0f;
   gyOffset = 0.0f;
   gzOffset = 0.0f;
 
   Serial.println("Calibrating gyro: keep central still...");
   for (int i = 0; i < GYRO_CALIBRATION_SAMPLES; i++) {
-    while (!IMU.gyroscopeAvailable()) {}
+    unsigned long start = millis();
+    while (!IMU.gyroscopeAvailable()) {
+      if (millis() - start > gyroWaitTimeoutMs) {
+        break;
+      }
+      delay(1);
+    }
+    if (!IMU.gyroscopeAvailable()) {
+      continue;
+    }
     IMU.readGyroscope(gx, gy, gz);
     gxOffset += gx;
     gyOffset += gy;
     gzOffset += gz;
+    collected++;
     delay(5);
   }
 
-  gxOffset /= GYRO_CALIBRATION_SAMPLES;
-  gyOffset /= GYRO_CALIBRATION_SAMPLES;
-  gzOffset /= GYRO_CALIBRATION_SAMPLES;
+  if (collected > 0) {
+    gxOffset /= collected;
+    gyOffset /= collected;
+    gzOffset /= collected;
+  }
+
+  Serial.print("Gyro calibration samples: ");
+  Serial.println(collected);
   Serial.println("Gyro calibration complete.");
 }
 
@@ -128,18 +145,16 @@ void connectToPeripheral() {
   BLEDevice peripheral;
 
   Serial.println("- Discovering peripheral device...");
-
   do {
-    // Scan for the remote IMU peripheral
     BLE.scanForUuid(remoteDeviceServiceUuid);
     peripheral = BLE.available();
-  } while (!peripheral);  
+  } while (!peripheral);
+
+  BLE.stopScan();
 
   Serial.println("* Peripheral device found!");
   Serial.print("* Device MAC address: ");
   Serial.println(peripheral.address());
-  
-  BLE.stopScan();
 
   controlPeripheral(peripheral);
 }
