@@ -2,21 +2,22 @@
 #include <Arduino_BMI270_BMM150.h>
 #include <ReefwingAHRS.h>
 
-const char* deviceServiceUuid               = "19b10000-e8f2-537e-4f6c-d104768a1214";
-const char* deviceServiceCharacteristicUuid = "19b10001-e8f2-537e-4f6c-d104768a1214";
+const char* rawServiceUuid = "19b10010-e8f2-537e-4f6c-d104768a1214";
+const char* rawCharacteristicUuid = "19b10011-e8f2-537e-4f6c-d104768a1214";
 
-BLEService deviceService(deviceServiceUuid);
-
-struct IMUPacket{
-  uint32_t t;
+struct RawImuPacket {
+  uint32_t deviceTimestampMs;
+  uint32_t seq;
   float yaw;
   float pitch;
   float roll;
 };
 
-BLECharacteristic deviceCharacteristic(
-  deviceServiceCharacteristicUuid,
-  BLERead | BLENotify, sizeof(IMUPacket)
+BLEService rawService(rawServiceUuid);
+BLECharacteristic rawCharacteristic(
+  rawCharacteristicUuid,
+  BLERead | BLENotify,
+  sizeof(RawImuPacket)
 );
 
 ReefwingAHRS ahrs;
@@ -25,9 +26,7 @@ float gxOffset = 0.0f;
 float gyOffset = 0.0f;
 float gzOffset = 0.0f;
 const int GYRO_CALIBRATION_SAMPLES = 500;
-const float PITCH_EMA_ALPHA = 0.2f;
-float filteredPitch = 0.0f;
-bool hasFilteredPitch = false;
+uint32_t packetSeq = 0;
 
 void calibrateGyro() {
   float gx = 0.0f;
@@ -54,118 +53,74 @@ void calibrateGyro() {
 }
 
 void setup() {
-
   Serial.begin(115200);
   while (!Serial && millis() < 5000) {}
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
 
-    if (!BLE.begin()) {
-    Serial.println("- Starting Bluetooth® Low Energy module failed!");
-    while (1);
+  if (!BLE.begin()) {
+    Serial.println("Failed to start BLE module.");
+    while (1) {}
   }
 
-  BLE.setLocalName("Arduino Nano 33 BLE (Peripheral)");
+  BLE.setLocalName("Nano 33 BLE (PeripheralIMU)");
+  BLE.setAdvertisedService(rawService);
+  rawService.addCharacteristic(rawCharacteristic);
+  BLE.addService(rawService);
 
-  BLE.setAdvertisedService(deviceService);
-
-  deviceService.addCharacteristic(deviceCharacteristic);
-
-  BLE.addService(deviceService);
-
-  IMUPacket initPacket = {0, 0.0f, 0.0f, 0.0f};
-  deviceCharacteristic.writeValue(
-    (const uint8_t*)&initPacket,
-    sizeof(IMUPacket)
-  );
+  RawImuPacket initPacket = {0, 0, 0.0f, 0.0f, 0.0f};
+  rawCharacteristic.writeValue((const uint8_t*)&initPacket, sizeof(RawImuPacket));
 
   BLE.advertise();
 
-  Serial.println("Nano 33 BLE (Peripheral Device) - Minimal");
-  Serial.println("Advertising...");
-  Serial.println(" ");
-
-  if ( ! IMU.begin() ){
-    while (1);
+  if (!IMU.begin()) {
+    while (1) {}
   }
+
   calibrateGyro();
 
   ahrs.begin();
-
-/*
-  Needed if we are using magnetometer (6 DOF vs 9 DOF)
-*/
   ahrs.setDOF(DOF::DOF_6);
-
-
-/*
-  Needed for better data accuracy
-  Algorithm choice will depend on type of motion
-*/
   ahrs.setFusionAlgorithm(SensorFusion::MADGWICK);
-  ahrs.setBeta(0.01f);                              // changes sensitivity to movement
+  ahrs.setBeta(0.01f);
 
-/*
-  Needed if using 9 DOF 
-  This sets angle between magnetic north and true north @ our location
-
-  ahrs.setDeclination()
-*/
+  Serial.println("Peripheral IMU ready and advertising raw packets.");
 }
 
 void loop() {
+  BLEDevice pc = BLE.central();
 
-  BLEDevice central = BLE.central();
-
-  Serial.println("- Discovering central device...");
-  delay(500);
-
-  if (central) {
-    Serial.println("* Connected to central device!");
-    Serial.print("* Device MAC address: ");
-    Serial.println(central.address());  
-    Serial.println(" ");
-
+  if (pc) {
+    Serial.println("PC connected to peripheral.");
     digitalWrite(LED_BUILTIN, HIGH);
 
-    while (central.connected()) {
+    while (pc.connected()) {
       BLE.poll();
 
-      uint32_t t = millis();
-
-      if ( IMU.gyroscopeAvailable() && IMU.accelerationAvailable() /* && IMU.magneticFieldAvailable() */ ){
+      if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable()) {
         IMU.readGyroscope(data.gx, data.gy, data.gz);
         data.gx -= gxOffset;
         data.gy -= gyOffset;
         data.gz -= gzOffset;
+
         IMU.readAcceleration(data.ax, data.ay, data.az);
-        // IMU.readMagneticField(data.mx, data.my, data.mz);
 
         ahrs.setData(data);
         ahrs.update();
 
-        IMUPacket packet;
-        packet.t = t;
+        RawImuPacket packet;
+        packet.deviceTimestampMs = millis();
+        packet.seq = packetSeq++;
         packet.yaw = ahrs.angles.yaw;
-        if (!hasFilteredPitch) {
-          filteredPitch = ahrs.angles.pitch;
-          hasFilteredPitch = true;
-        } else {
-          filteredPitch =
-            (1.0f - PITCH_EMA_ALPHA) * filteredPitch + PITCH_EMA_ALPHA * ahrs.angles.pitch;
-        }
-        packet.pitch = filteredPitch;
+        packet.pitch = ahrs.angles.pitch;
         packet.roll = ahrs.angles.roll;
 
-        // send packet with time, yaw, pitch, and roll in byte form
-        deviceCharacteristic.writeValue(
-          (const uint8_t*)&packet,
-          sizeof(IMUPacket)
-        );
+        rawCharacteristic.writeValue((const uint8_t*)&packet, sizeof(RawImuPacket));
 
-        // print to serial monitor for debugging
-        Serial.print(packet.t);
+        Serial.print(packet.deviceTimestampMs);
+        Serial.print(",");
+        Serial.print(packet.seq);
         Serial.print(",");
         Serial.print(packet.yaw, 6);
         Serial.print(",");
@@ -173,9 +128,11 @@ void loop() {
         Serial.print(",");
         Serial.println(packet.roll, 6);
       }
+
+      delay(40);
     }
 
-    Serial.println("* Disconnected from central device!");
+    Serial.println("PC disconnected from peripheral.");
     digitalWrite(LED_BUILTIN, LOW);
   }
 }
