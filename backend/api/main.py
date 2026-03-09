@@ -6,7 +6,7 @@ import struct
 
 import uvicorn
 from bleak import BleakClient, BleakScanner
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.services.imu_stream import ImuStreamService
@@ -30,8 +30,12 @@ app.add_middleware(
 
 RAW_IMU_SERVICE_UUID = "19b10010-e8f2-537e-4f6c-d104768a1214"
 RAW_IMU_CHAR_UUID = "19b10011-e8f2-537e-4f6c-d104768a1214"
-RAW_PACKET_FORMAT = "<IIfff"
-RAW_PACKET_SIZE = struct.calcsize(RAW_PACKET_FORMAT)
+
+CENTRAL_PACKET_FORMAT = "<IIfff"
+CENTRAL_PACKET_SIZE = struct.calcsize(CENTRAL_PACKET_FORMAT)
+
+PERIPHERAL_PACKET_FORMAT = "<IIf"
+PERIPHERAL_PACKET_SIZE = struct.calcsize(PERIPHERAL_PACKET_FORMAT)
 
 CENTRAL_ROLE = "central"
 PERIPHERAL_ROLE = "peripheral"
@@ -43,26 +47,32 @@ ROLE_TO_DEVICE_NAME = {
 ble_tasks: list[asyncio.Task] = []
 
 
-def _parse_raw_packet(data: bytes):
-    if len(data) < RAW_PACKET_SIZE:
+def _parse_raw_packet(role: str, data: bytes):
+    if role == CENTRAL_ROLE:
+        if len(data) < CENTRAL_PACKET_SIZE:
+            return None
+        return struct.unpack(CENTRAL_PACKET_FORMAT, data[:CENTRAL_PACKET_SIZE])
+
+    if len(data) < PERIPHERAL_PACKET_SIZE:
         return None
-    return struct.unpack(RAW_PACKET_FORMAT, data[:RAW_PACKET_SIZE])
+    unpacked = struct.unpack(PERIPHERAL_PACKET_FORMAT, data[:PERIPHERAL_PACKET_SIZE])
+    return (*unpacked, 0.0, 0.0)
 
 
 def _make_notification_handler(role: str):
     def notification_handler(_sender, data: bytes):
-        parsed = _parse_raw_packet(data)
+        parsed = _parse_raw_packet(role, data)
         if parsed is None:
             return
 
-        device_timestamp_ms, seq, yaw_deg, pitch_deg, roll_deg = parsed
+        device_timestamp_ms, seq, roll_deg, emg_quad_percent, emg_ham_percent = parsed
         imu_service.ingest_raw_sample(
             role=role,
             device_timestamp_ms=device_timestamp_ms,
             seq=seq,
-            yaw_deg=yaw_deg,
-            pitch_deg=pitch_deg,
             roll_deg=roll_deg,
+            emg_quad_percent=emg_quad_percent,
+            emg_ham_percent=emg_ham_percent,
         )
 
     return notification_handler
@@ -113,12 +123,26 @@ def health():
         "central_connected": imu_service.central_connected,
         "peripheral_connected": imu_service.peripheral_connected,
         "recording": imu_service.recording,
+        "calibration_active": imu_service.calibration_active,
     }
 
 
 @app.get("/knee-angle/latest")
 def knee_angle_latest():
     return imu_service.latest_dict()
+
+
+@app.post("/calibration/zero")
+def calibration_zero():
+    try:
+        return imu_service.calibrate_current_pose()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/calibration/reset")
+def calibration_reset():
+    return imu_service.reset_calibration()
 
 
 @app.post("/session/start")
@@ -142,9 +166,11 @@ def stop_session():
         writer.writerow(
             [
                 "timestamp_utc",
-                "central_pitch_deg",
-                "peripheral_pitch_deg",
+                "central_roll_deg",
+                "peripheral_roll_deg",
                 "knee_angle_deg",
+                "emg_quad_percent",
+                "emg_ham_percent",
                 "pair_dt_ms",
             ]
         )
@@ -152,9 +178,11 @@ def stop_session():
             writer.writerow(
                 [
                     sample.timestamp_utc,
-                    sample.central_pitch_deg,
-                    sample.peripheral_pitch_deg,
+                    sample.central_roll_deg,
+                    sample.peripheral_roll_deg,
                     sample.knee_angle_deg,
+                    sample.emg_quad_percent,
+                    sample.emg_ham_percent,
                     sample.pair_dt_ms,
                 ]
             )

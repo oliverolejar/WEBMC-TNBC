@@ -5,11 +5,9 @@
 const char* rawServiceUuid = "19b10010-e8f2-537e-4f6c-d104768a1214";
 const char* rawCharacteristicUuid = "19b10011-e8f2-537e-4f6c-d104768a1214";
 
-struct RawImuPacket {
+struct PeripheralRawPacket {
   uint32_t deviceTimestampMs;
   uint32_t seq;
-  float yaw;
-  float pitch;
   float roll;
 };
 
@@ -17,47 +15,79 @@ BLEService rawService(rawServiceUuid);
 BLECharacteristic rawCharacteristic(
   rawCharacteristicUuid,
   BLERead | BLENotify,
-  sizeof(RawImuPacket)
+  sizeof(PeripheralRawPacket)
 );
 
 ReefwingAHRS ahrs;
 SensorData data = {};
+
 float gxOffset = 0.0f;
 float gyOffset = 0.0f;
 float gzOffset = 0.0f;
+
 const int GYRO_CALIBRATION_SAMPLES = 500;
+const float smooth = 0.2f;
+const unsigned long UPDATE_INTERVAL_MS = 10;   // ~100 Hz
+
 uint32_t packetSeq = 0;
+unsigned long lastUpdate = 0;
+
+float rollF = 0.0f;
+
+float wrap180(float a) {
+  while (a > 180.0f) a -= 360.0f;
+  while (a < -180.0f) a += 360.0f;
+  return a;
+}
 
 void calibrateGyro() {
   float gx = 0.0f;
   float gy = 0.0f;
   float gz = 0.0f;
+  int collected = 0;
+  const unsigned long gyroWaitTimeoutMs = 3000;
+
   gxOffset = 0.0f;
   gyOffset = 0.0f;
   gzOffset = 0.0f;
 
-  Serial.println("Calibrating gyro: keep peripheral still...");
+  Serial.println("Calibrating gyro... DO NOT MOVE (peripheral)");
+
   for (int i = 0; i < GYRO_CALIBRATION_SAMPLES; i++) {
-    while (!IMU.gyroscopeAvailable()) {}
+    unsigned long start = millis();
+    while (!IMU.gyroscopeAvailable()) {
+      if (millis() - start > gyroWaitTimeoutMs) {
+        break;
+      }
+      delay(1);
+    }
+
+    if (!IMU.gyroscopeAvailable()) {
+      continue;
+    }
+
     IMU.readGyroscope(gx, gy, gz);
     gxOffset += gx;
     gyOffset += gy;
     gzOffset += gz;
+    collected++;
     delay(5);
   }
 
-  gxOffset /= GYRO_CALIBRATION_SAMPLES;
-  gyOffset /= GYRO_CALIBRATION_SAMPLES;
-  gzOffset /= GYRO_CALIBRATION_SAMPLES;
+  if (collected > 0) {
+    gxOffset /= collected;
+    gyOffset /= collected;
+    gzOffset /= collected;
+  }
+
+  Serial.print("Gyro calibration samples: ");
+  Serial.println(collected);
   Serial.println("Gyro calibration complete.");
 }
 
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 5000) {}
-
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
 
   if (!BLE.begin()) {
     Serial.println("Failed to start BLE module.");
@@ -69,12 +99,12 @@ void setup() {
   rawService.addCharacteristic(rawCharacteristic);
   BLE.addService(rawService);
 
-  RawImuPacket initPacket = {0, 0, 0.0f, 0.0f, 0.0f};
-  rawCharacteristic.writeValue((const uint8_t*)&initPacket, sizeof(RawImuPacket));
-
+  PeripheralRawPacket initPacket = {0, 0, 0.0f};
+  rawCharacteristic.writeValue((const uint8_t*)&initPacket, sizeof(PeripheralRawPacket));
   BLE.advertise();
 
   if (!IMU.begin()) {
+    Serial.println("IMU failed to start.");
     while (1) {}
   }
 
@@ -82,57 +112,51 @@ void setup() {
 
   ahrs.begin();
   ahrs.setDOF(DOF::DOF_6);
-  ahrs.setFusionAlgorithm(SensorFusion::MADGWICK);
-  ahrs.setBeta(0.01f);
+  ahrs.setFusionAlgorithm(SensorFusion::MAHONY);
+  ahrs.setKp(5.0f);
+  ahrs.setKi(0.0f);
+  ahrs.setDeclination(-8.51f);
 
-  Serial.println("Peripheral IMU ready and advertising raw packets.");
+  Serial.println("Peripheral IMU ready and advertising packets.");
 }
 
 void loop() {
-  BLEDevice pc = BLE.central();
+  BLE.poll();
 
-  if (pc) {
-    Serial.println("PC connected to peripheral.");
-    digitalWrite(LED_BUILTIN, HIGH);
+  unsigned long now = millis();
+  if (now - lastUpdate < UPDATE_INTERVAL_MS) {
+    return;
+  }
+  lastUpdate = now;
 
-    while (pc.connected()) {
-      BLE.poll();
+  if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable()) {
+    IMU.readGyroscope(data.gx, data.gy, data.gz);
+    IMU.readAcceleration(data.ax, data.ay, data.az);
 
-      if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable()) {
-        IMU.readGyroscope(data.gx, data.gy, data.gz);
-        data.gx -= gxOffset;
-        data.gy -= gyOffset;
-        data.gz -= gzOffset;
-
-        IMU.readAcceleration(data.ax, data.ay, data.az);
-
-        ahrs.setData(data);
-        ahrs.update();
-
-        RawImuPacket packet;
-        packet.deviceTimestampMs = millis();
-        packet.seq = packetSeq++;
-        packet.yaw = ahrs.angles.yaw;
-        packet.pitch = ahrs.angles.pitch;
-        packet.roll = ahrs.angles.roll;
-
-        rawCharacteristic.writeValue((const uint8_t*)&packet, sizeof(RawImuPacket));
-
-        Serial.print(packet.deviceTimestampMs);
-        Serial.print(",");
-        Serial.print(packet.seq);
-        Serial.print(",");
-        Serial.print(packet.yaw, 6);
-        Serial.print(",");
-        Serial.print(packet.pitch, 6);
-        Serial.print(",");
-        Serial.println(packet.roll, 6);
-      }
-
-      delay(40);
+    if (IMU.magneticFieldAvailable()) {
+      IMU.readMagneticField(data.mx, data.my, data.mz);
     }
 
-    Serial.println("PC disconnected from peripheral.");
-    digitalWrite(LED_BUILTIN, LOW);
+    data.gx -= gxOffset;
+    data.gy -= gyOffset;
+    data.gz -= gzOffset;
+
+    ahrs.setData(data);
+    ahrs.update();
+
+    rollF = (1.0f - smooth) * rollF + smooth * ahrs.angles.roll;
+
+    PeripheralRawPacket packet;
+    packet.deviceTimestampMs = now;
+    packet.seq = packetSeq++;
+    packet.roll = wrap180(rollF);
+
+    rawCharacteristic.writeValue((const uint8_t*)&packet, sizeof(PeripheralRawPacket));
+
+    Serial.print(packet.deviceTimestampMs);
+    Serial.print(",");
+    Serial.print(packet.seq);
+    Serial.print(",");
+    Serial.println(packet.roll, 3);
   }
 }

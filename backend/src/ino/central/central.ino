@@ -5,28 +5,68 @@
 const char* rawServiceUuid = "19b10010-e8f2-537e-4f6c-d104768a1214";
 const char* rawCharacteristicUuid = "19b10011-e8f2-537e-4f6c-d104768a1214";
 
-struct RawImuPacket {
+struct CentralRawPacket {
   uint32_t deviceTimestampMs;
   uint32_t seq;
-  float yaw;
-  float pitch;
   float roll;
+  float emgQuadPercent;
+  float emgHamPercent;
 };
 
 BLEService rawService(rawServiceUuid);
 BLECharacteristic rawCharacteristic(
   rawCharacteristicUuid,
   BLERead | BLENotify,
-  sizeof(RawImuPacket)
+  sizeof(CentralRawPacket)
 );
 
 ReefwingAHRS ahrs;
 SensorData data = {};
+
 float gxOffset = 0.0f;
 float gyOffset = 0.0f;
 float gzOffset = 0.0f;
+
 const int GYRO_CALIBRATION_SAMPLES = 500;
+const float smooth = 0.2f;
+const unsigned long UPDATE_INTERVAL_MS = 10;   // ~100 Hz
+
 uint32_t packetSeq = 0;
+unsigned long lastUpdate = 0;
+
+float rollF = 0.0f;
+
+// ===================== EMG 1 (Quad) =====================
+const int EMG1_PIN = A0;
+const int EMG1_ZERO_OFFSET = 832;
+const int EMG1_ENVELOPE_BASELINE = 36;
+
+// ===================== EMG 2 (Hamstring) =====================
+const int EMG2_PIN = A3;
+const int EMG2_ZERO_OFFSET = 832;
+const int EMG2_ENVELOPE_BASELINE = 36;
+
+// Shared EMG settings
+const float ENVELOPE_ALPHA = 0.10f;
+const unsigned long EMG_SAMPLE_INTERVAL_MS = 5;
+const int EMG_PERCENT_FULL_SCALE = 500;   // 500 -> 100%
+
+unsigned long lastEmgSampleMs = 0;
+
+float emg1Envelope = 0.0f;
+int emg1Activation = 0;
+float emg1Percent = 0.0f;
+
+float emg2Envelope = 0.0f;
+int emg2Activation = 0;
+float emg2Percent = 0.0f;
+// =========================================================
+
+float wrap180(float a) {
+  while (a > 180.0f) a -= 360.0f;
+  while (a < -180.0f) a += 360.0f;
+  return a;
+}
 
 void calibrateGyro() {
   float gx = 0.0f;
@@ -34,11 +74,13 @@ void calibrateGyro() {
   float gz = 0.0f;
   int collected = 0;
   const unsigned long gyroWaitTimeoutMs = 3000;
+
   gxOffset = 0.0f;
   gyOffset = 0.0f;
   gzOffset = 0.0f;
 
-  Serial.println("Calibrating gyro: keep central still...");
+  Serial.println("Calibrating gyro... DO NOT MOVE (central)");
+
   for (int i = 0; i < GYRO_CALIBRATION_SAMPLES; i++) {
     unsigned long start = millis();
     while (!IMU.gyroscopeAvailable()) {
@@ -47,6 +89,7 @@ void calibrateGyro() {
       }
       delay(1);
     }
+
     if (!IMU.gyroscopeAvailable()) {
       continue;
     }
@@ -70,10 +113,46 @@ void calibrateGyro() {
   Serial.println("Gyro calibration complete.");
 }
 
+float activationToPercent(int activation) {
+  if (activation < 0) activation = 0;
+  if (activation > EMG_PERCENT_FULL_SCALE) activation = EMG_PERCENT_FULL_SCALE;
+  return (activation / (float)EMG_PERCENT_FULL_SCALE) * 100.0f;
+}
+
+void updateEmgs(unsigned long now) {
+  if (now - lastEmgSampleMs < EMG_SAMPLE_INTERVAL_MS) {
+    return;
+  }
+  lastEmgSampleMs = now;
+
+  // ---- EMG 1: Quad on A0 ----
+  int raw1 = analogRead(EMG1_PIN);
+  int raw1Zeroed = raw1 - EMG1_ZERO_OFFSET;
+  int rectified1 = abs(raw1Zeroed);
+
+  emg1Envelope = (1.0f - ENVELOPE_ALPHA) * emg1Envelope + ENVELOPE_ALPHA * rectified1;
+  emg1Activation = (int)emg1Envelope - EMG1_ENVELOPE_BASELINE;
+  if (emg1Activation < 0) emg1Activation = 0;
+  emg1Percent = activationToPercent(emg1Activation);
+
+  // ---- EMG 2: Hamstring on A3 ----
+  int raw2 = analogRead(EMG2_PIN);
+  int raw2Zeroed = raw2 - EMG2_ZERO_OFFSET;
+  int rectified2 = abs(raw2Zeroed);
+
+  emg2Envelope = (1.0f - ENVELOPE_ALPHA) * emg2Envelope + ENVELOPE_ALPHA * rectified2;
+  emg2Activation = (int)emg2Envelope - EMG2_ENVELOPE_BASELINE;
+  if (emg2Activation < 0) emg2Activation = 0;
+  emg2Percent = activationToPercent(emg2Activation);
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 5000) {}
   Serial.println("Central setup started.");
+
+  pinMode(EMG1_PIN, INPUT);
+  pinMode(EMG2_PIN, INPUT);
 
   if (!BLE.begin()) {
     Serial.println("Failed to start BLE module.");
@@ -85,8 +164,8 @@ void setup() {
   rawService.addCharacteristic(rawCharacteristic);
   BLE.addService(rawService);
 
-  RawImuPacket initPacket = {0, 0, 0.0f, 0.0f, 0.0f};
-  rawCharacteristic.writeValue((const uint8_t*)&initPacket, sizeof(RawImuPacket));
+  CentralRawPacket initPacket = {0, 0, 0.0f, 0.0f, 0.0f};
+  rawCharacteristic.writeValue((const uint8_t*)&initPacket, sizeof(CentralRawPacket));
   BLE.advertise();
 
   if (!IMU.begin()) {
@@ -98,55 +177,59 @@ void setup() {
 
   ahrs.begin();
   ahrs.setDOF(DOF::DOF_6);
-  ahrs.setFusionAlgorithm(SensorFusion::MADGWICK);
-  ahrs.setBeta(0.01f);
+  ahrs.setFusionAlgorithm(SensorFusion::MAHONY);
+  ahrs.setKp(5.0f);
+  ahrs.setKi(0.0f);
+  ahrs.setDeclination(-8.51f);
 
-  Serial.println("Central IMU ready and advertising raw packets.");
+  Serial.println("Central IMU + dual EMG ready and advertising packets.");
 }
 
 void loop() {
-  BLEDevice pc = BLE.central();
+  BLE.poll();
 
-  if (pc) {
-    Serial.println("PC connected to central.");
+  unsigned long now = millis();
+  updateEmgs(now);
 
-    while (pc.connected()) {
-      BLE.poll();
+  if (now - lastUpdate < UPDATE_INTERVAL_MS) {
+    return;
+  }
+  lastUpdate = now;
 
-      if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable()) {
-        IMU.readGyroscope(data.gx, data.gy, data.gz);
-        data.gx -= gxOffset;
-        data.gy -= gyOffset;
-        data.gz -= gzOffset;
+  if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable()) {
+    IMU.readGyroscope(data.gx, data.gy, data.gz);
+    IMU.readAcceleration(data.ax, data.ay, data.az);
 
-        IMU.readAcceleration(data.ax, data.ay, data.az);
-
-        ahrs.setData(data);
-        ahrs.update();
-
-        RawImuPacket packet;
-        packet.deviceTimestampMs = millis();
-        packet.seq = packetSeq++;
-        packet.yaw = ahrs.angles.yaw;
-        packet.pitch = ahrs.angles.pitch;
-        packet.roll = ahrs.angles.roll;
-
-        rawCharacteristic.writeValue((const uint8_t*)&packet, sizeof(RawImuPacket));
-
-        Serial.print(packet.deviceTimestampMs);
-        Serial.print(",");
-        Serial.print(packet.seq);
-        Serial.print(",");
-        Serial.print(packet.yaw, 6);
-        Serial.print(",");
-        Serial.print(packet.pitch, 6);
-        Serial.print(",");
-        Serial.println(packet.roll, 6);
-      }
-
-      delay(40);
+    if (IMU.magneticFieldAvailable()) {
+      IMU.readMagneticField(data.mx, data.my, data.mz);
     }
 
-    Serial.println("PC disconnected from central.");
+    data.gx -= gxOffset;
+    data.gy -= gyOffset;
+    data.gz -= gzOffset;
+
+    ahrs.setData(data);
+    ahrs.update();
+
+    rollF = (1.0f - smooth) * rollF + smooth * ahrs.angles.roll;
+
+    CentralRawPacket packet;
+    packet.deviceTimestampMs = now;
+    packet.seq = packetSeq++;
+    packet.roll = wrap180(rollF);
+    packet.emgQuadPercent = emg1Percent;
+    packet.emgHamPercent = emg2Percent;
+
+    rawCharacteristic.writeValue((const uint8_t*)&packet, sizeof(CentralRawPacket));
+
+    Serial.print(packet.deviceTimestampMs);
+    Serial.print(",");
+    Serial.print(packet.seq);
+    Serial.print(",");
+    Serial.print(packet.roll, 3);
+    Serial.print(",");
+    Serial.print(packet.emgQuadPercent, 1);
+    Serial.print(",");
+    Serial.println(packet.emgHamPercent, 1);
   }
 }
