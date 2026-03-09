@@ -49,7 +49,7 @@ const int EMG2_ENVELOPE_BASELINE = 36;
 // Shared EMG settings
 const float ENVELOPE_ALPHA = 0.10f;
 const unsigned long EMG_SAMPLE_INTERVAL_MS = 5;
-const int EMG_PERCENT_FULL_SCALE = 500;   // 500 -> 100%
+const int EMG_PERCENT_FULL_SCALE = 600;   // 500 -> 100%
 
 unsigned long lastEmgSampleMs = 0;
 
