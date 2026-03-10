@@ -16,7 +16,7 @@ const EMGChart = ({ data, isConnected = true, label, color = "#4f2683", currentV
                     <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 flex items-center justify-center">
                         <span className="text-slate-400 text-xl">⚠️</span>
                     </div>
-                    <p className="text-slate-400 font-medium">EMG Sensor Disconnected</p>
+                    <p className="text-slate-400 font-medium">{label ? `${label} ` : ''}EMG Sensor Disconnected</p>
                 </div>
             </div>
         );
@@ -27,7 +27,7 @@ const EMGChart = ({ data, isConnected = true, label, color = "#4f2683", currentV
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold text-slate-700">{label ? `${label} - ` : ''}Muscle Activity (EMG)</h3>
                 <div className="bg-brand-deep text-white px-3 py-1 rounded-lg font-mono text-sm">
-                    {Math.round(currentValue)} µV
+                    {Math.round(currentValue)}%
                 </div>
             </div>
 

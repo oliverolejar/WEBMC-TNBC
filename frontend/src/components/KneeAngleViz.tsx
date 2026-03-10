@@ -7,7 +7,7 @@ interface KneeAngleVizProps {
     label: string;
 }
 
-const KneeAngleViz = ({ angle, isConnected = true, label }: KneeAngleVizProps) => {
+const KneeAngleViz = ({ angle, isConnected = true, side, label }: KneeAngleVizProps) => {
     if (!isConnected) {
         return (
             <div className="h-full w-full flex items-center justify-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
@@ -15,7 +15,7 @@ const KneeAngleViz = ({ angle, isConnected = true, label }: KneeAngleVizProps) =
                     <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 flex items-center justify-center">
                         <span className="text-slate-400 text-xl">⚠️</span>
                     </div>
-                    <p className="text-slate-400 font-medium">Knee Sleeve Disconnected</p>
+                    <p className="text-slate-400 font-medium">{side} Knee Sleeve Disconnected</p>
                 </div>
             </div>
         );

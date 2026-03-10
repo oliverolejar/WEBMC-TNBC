@@ -12,7 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.services.imu_stream import ImuStreamService
 
 app = FastAPI()
-imu_service = ImuStreamService(pair_window_ms=40)
+
+# ── Leg config ────────────────────────────────────────────────────────────────
+# Change to ["right", "left"] to enable both legs.
+# With ["right"], left sensors are ignored and no errors are raised for them.
+ENABLED_LEGS = ["right"]
+
+imu_service = ImuStreamService(pair_window_ms=40, enabled_legs=ENABLED_LEGS)
 
 origins = [
     "http://localhost:8000",
@@ -28,41 +34,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── BLE / packet config ───────────────────────────────────────────────────────
 RAW_IMU_SERVICE_UUID = "19b10010-e8f2-537e-4f6c-d104768a1214"
-RAW_IMU_CHAR_UUID = "19b10011-e8f2-537e-4f6c-d104768a1214"
-RAW_PACKET_FORMAT = "<IIfff"
-RAW_PACKET_SIZE = struct.calcsize(RAW_PACKET_FORMAT)
+RAW_IMU_CHAR_UUID    = "19b10011-e8f2-537e-4f6c-d104768a1214"
 
-CENTRAL_ROLE = "central"
-PERIPHERAL_ROLE = "peripheral"
-ROLE_TO_DEVICE_NAME = {
-    CENTRAL_ROLE: "Nano 33 BLE (CentralIMU)",
-    PERIPHERAL_ROLE: "Nano 33 BLE (PeripheralIMU)",
+# Payload: role_id(B) device_ts(I) seq(I) roll(f) emgQuad(f) emgHam(f)  →  21 bytes
+RAW_PACKET_FORMAT = "<BIIfff"
+RAW_PACKET_SIZE   = struct.calcsize(RAW_PACKET_FORMAT)
+
+# Role registry: key → ble_name, expected role_id, leg, segment
+ROLE_CONFIG: dict[str, dict] = {
+    "right_upper": {"ble_name": "Nano33BLE-right_upper", "role_id": 1, "leg": "right", "segment": "upper"},
+    "right_lower": {"ble_name": "Nano33BLE-right_lower", "role_id": 2, "leg": "right", "segment": "lower"},
+    "left_upper":  {"ble_name": "Nano33BLE-left_upper",  "role_id": 3, "leg": "left",  "segment": "upper"},
+    "left_lower":  {"ble_name": "Nano33BLE-left_lower",  "role_id": 4, "leg": "left",  "segment": "lower"},
 }
 
 ble_tasks: list[asyncio.Task] = []
 
 
-def _parse_raw_packet(data: bytes):
-    if len(data) < RAW_PACKET_SIZE:
-        return None
-    return struct.unpack(RAW_PACKET_FORMAT, data[:RAW_PACKET_SIZE])
-
-
-def _make_notification_handler(role: str):
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _make_notification_handler(role: str, expected_role_id: int):
     def notification_handler(_sender, data: bytes):
-        parsed = _parse_raw_packet(data)
-        if parsed is None:
+        if len(data) < RAW_PACKET_SIZE:
+            print(f"[BLE] {role}: short packet ({len(data)} B), dropped")
             return
 
-        device_timestamp_ms, seq, yaw_deg, pitch_deg, roll_deg = parsed
+        role_id, device_ts, seq, roll, emg_quad, emg_ham = struct.unpack(
+            RAW_PACKET_FORMAT, data[:RAW_PACKET_SIZE]
+        )
+
+        if role_id != expected_role_id:
+            print(
+                f"[ANTI-MIX] {role}: got role_id={role_id}, "
+                f"expected {expected_role_id} — dropped"
+            )
+            return
+
         imu_service.ingest_raw_sample(
             role=role,
-            device_timestamp_ms=device_timestamp_ms,
+            device_timestamp_ms=device_ts,
             seq=seq,
-            yaw_deg=yaw_deg,
-            pitch_deg=pitch_deg,
-            roll_deg=roll_deg,
+            roll_deg=roll,
+            emg_quad_pct=emg_quad,
+            emg_ham_pct=emg_ham,
         )
 
     return notification_handler
@@ -79,8 +94,8 @@ def _device_matcher(target_name: str):
     return matcher
 
 
-async def ble_role_loop(role: str, target_name: str):
-    handler = _make_notification_handler(role)
+async def ble_role_loop(role: str, target_name: str, expected_role_id: int):
+    handler = _make_notification_handler(role, expected_role_id)
     matcher = _device_matcher(target_name)
 
     while True:
@@ -105,13 +120,19 @@ async def ble_role_loop(role: str, target_name: str):
             await asyncio.sleep(2)
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {
         "status": "ok",
         "device_connected": imu_service.device_connected,
-        "central_connected": imu_service.central_connected,
-        "peripheral_connected": imu_service.peripheral_connected,
+        "enabled_legs": imu_service.enabled_legs,
+        "right_available": imu_service.leg_available("right"),
+        "left_available":  imu_service.leg_available("left"),
+        "right_upper_connected": imu_service.connected_by_role["right_upper"],
+        "right_lower_connected": imu_service.connected_by_role["right_lower"],
+        "left_upper_connected":  imu_service.connected_by_role["left_upper"],
+        "left_lower_connected":  imu_service.connected_by_role["left_lower"],
         "recording": imu_service.recording,
     }
 
@@ -119,6 +140,17 @@ def health():
 @app.get("/knee-angle/latest")
 def knee_angle_latest():
     return imu_service.latest_dict()
+
+
+@app.get("/emg/latest")
+def emg_latest():
+    d = imu_service.latest_dict()
+    return {
+        "right_emg_quad_pct": d.get("right_emg_quad_pct"),
+        "right_emg_ham_pct":  d.get("right_emg_ham_pct"),
+        "left_emg_quad_pct":  d.get("left_emg_quad_pct"),
+        "left_emg_ham_pct":   d.get("left_emg_ham_pct"),
+    }
 
 
 @app.post("/session/start")
@@ -139,25 +171,27 @@ def stop_session():
 
     with output_path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(
-            [
-                "timestamp_utc",
-                "central_pitch_deg",
-                "peripheral_pitch_deg",
-                "knee_angle_deg",
-                "pair_dt_ms",
-            ]
-        )
+        writer.writerow([
+            "timestamp_utc",
+            "leg",
+            "upper_roll_deg",
+            "lower_roll_deg",
+            "knee_angle_deg",
+            "emg_quad_pct",
+            "emg_ham_pct",
+            "pair_dt_ms",
+        ])
         for sample in rows:
-            writer.writerow(
-                [
-                    sample.timestamp_utc,
-                    sample.central_pitch_deg,
-                    sample.peripheral_pitch_deg,
-                    sample.knee_angle_deg,
-                    sample.pair_dt_ms,
-                ]
-            )
+            writer.writerow([
+                sample.timestamp_utc,
+                sample.leg,
+                sample.upper_roll_deg,
+                sample.lower_roll_deg,
+                sample.knee_angle_deg,
+                sample.emg_quad_pct,
+                sample.emg_ham_pct,
+                sample.pair_dt_ms,
+            ])
 
     return {"saved_to": str(output_path), "rows": len(rows)}
 
@@ -165,9 +199,13 @@ def stop_session():
 @app.on_event("startup")
 async def on_startup():
     global ble_tasks
+    # Only start tasks for roles belonging to enabled legs
     ble_tasks = [
-        asyncio.create_task(ble_role_loop(CENTRAL_ROLE, ROLE_TO_DEVICE_NAME[CENTRAL_ROLE])),
-        asyncio.create_task(ble_role_loop(PERIPHERAL_ROLE, ROLE_TO_DEVICE_NAME[PERIPHERAL_ROLE])),
+        asyncio.create_task(
+            ble_role_loop(role, cfg["ble_name"], cfg["role_id"])
+        )
+        for role, cfg in ROLE_CONFIG.items()
+        if cfg["leg"] in ENABLED_LEGS
     ]
 
 
@@ -176,7 +214,6 @@ async def on_shutdown():
     global ble_tasks
     for task in ble_tasks:
         task.cancel()
-
     for task in ble_tasks:
         try:
             await task

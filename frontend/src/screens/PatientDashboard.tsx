@@ -12,17 +12,45 @@ const PatientDashboard = () => {
 
     // Live Data State
     const [kneeAngle, setKneeAngle] = useState(0);
+    const [leftKneeAngle, setLeftKneeAngle] = useState(0);
     const [deviceConnected, setDeviceConnected] = useState(false);
-    const [emgData] = useState<{ time: number; value: number }[]>([]);
+    const [rightConnected, setRightConnected] = useState(false);
+    const [leftConnected, setLeftConnected] = useState(false);
+    const MAX_EMG_POINTS = 100;
+    const [quadData, setQuadData] = useState<{ time: number; value: number }[]>([]);
+    const [hamData,  setHamData]  = useState<{ time: number; value: number }[]>([]);
+    const [leftQuadData, setLeftQuadData] = useState<{ time: number; value: number }[]>([]);
+    const [leftHamData,  setLeftHamData]  = useState<{ time: number; value: number }[]>([]);
 
     useEffect(() => {
         const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws/knee-angle`);
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            if (typeof data.knee_angle_deg === "number") {
-                setKneeAngle(data.knee_angle_deg);
+            const t = Date.now();
+
+            if (typeof data.right_knee_angle_deg === "number") {
+                setKneeAngle(data.right_knee_angle_deg);
             }
+            if (typeof data.left_knee_angle_deg === "number") {
+                setLeftKneeAngle(data.left_knee_angle_deg);
+            }
+            if (typeof data.right_emg_quad_pct === "number") {
+                setQuadData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.right_emg_quad_pct }]);
+            }
+            if (typeof data.right_emg_ham_pct === "number") {
+                setHamData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.right_emg_ham_pct }]);
+            }
+            if (typeof data.left_emg_quad_pct === "number") {
+                setLeftQuadData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.left_emg_quad_pct }]);
+            }
+            if (typeof data.left_emg_ham_pct === "number") {
+                setLeftHamData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.left_emg_ham_pct }]);
+            }
+
+            setRightConnected(!!data.right_available);
+            setLeftConnected(!!data.left_available);
+
             // Prefer stream payload status when available.
             if (typeof data.device_connected === "boolean") {
                 setDeviceConnected(data.device_connected);
@@ -50,9 +78,11 @@ const PatientDashboard = () => {
                 if (!response.ok) {
                     throw new Error(`Health check failed: ${response.status}`);
                 }
-                const data: { device_connected?: boolean } = await response.json();
+                const data: { device_connected?: boolean; right_available?: boolean; left_available?: boolean } = await response.json();
                 if (isMounted) {
                     setDeviceConnected(!!data.device_connected);
+                    setRightConnected(!!data.right_available);
+                    setLeftConnected(!!data.left_available);
                 }
             } catch {
                 // Keep the last known connection state; websocket samples are authoritative.
@@ -135,26 +165,65 @@ const PatientDashboard = () => {
             {/* Main Content */}
             <div className="flex-1 h-full min-h-0">
                 {currentView === 'live' ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-                        {/* Knee Angle Visualization */}
-                        <div className="h-full min-h-[400px]">
+                    <div className="flex flex-col gap-6">
+                        {/* Right Leg Row */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[400px]">
                             <KneeAngleViz
                                 side="Right"
-                                label=""
+                                label="Right"
                                 angle={kneeAngle}
-                                isConnected={deviceConnected}
+                                isConnected={rightConnected}
                             />
+                            <div className="flex flex-col gap-4 h-full">
+                                <div className="flex-1 min-h-[180px]">
+                                    <EMGChart
+                                        label="Right Quadriceps"
+                                        data={quadData}
+                                        isConnected={rightConnected}
+                                        color="#6d28d9"
+                                        currentValue={quadData.length > 0 ? quadData[quadData.length - 1].value : 0}
+                                    />
+                                </div>
+                                <div className="flex-1 min-h-[180px]">
+                                    <EMGChart
+                                        label="Right Hamstring"
+                                        data={hamData}
+                                        isConnected={rightConnected}
+                                        color="#0891b2"
+                                        currentValue={hamData.length > 0 ? hamData[hamData.length - 1].value : 0}
+                                    />
+                                </div>
+                            </div>
                         </div>
 
-                        {/* EMG Chart */}
-                        <div className="h-full min-h-[400px]">
-                            <EMGChart
-                                label=""
-                                data={emgData}
-                                isConnected={deviceConnected}
-                                color="#6d28d9"
-                                currentValue={emgData.length > 0 ? emgData[emgData.length - 1].value : 0}
+                        {/* Left Leg Row */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[400px]">
+                            <KneeAngleViz
+                                side="Left"
+                                label="Left"
+                                angle={leftKneeAngle}
+                                isConnected={leftConnected}
                             />
+                            <div className="flex flex-col gap-4 h-full">
+                                <div className="flex-1 min-h-[180px]">
+                                    <EMGChart
+                                        label="Left Quadriceps"
+                                        data={leftQuadData}
+                                        isConnected={leftConnected}
+                                        color="#6d28d9"
+                                        currentValue={leftQuadData.length > 0 ? leftQuadData[leftQuadData.length - 1].value : 0}
+                                    />
+                                </div>
+                                <div className="flex-1 min-h-[180px]">
+                                    <EMGChart
+                                        label="Left Hamstring"
+                                        data={leftHamData}
+                                        isConnected={leftConnected}
+                                        color="#0891b2"
+                                        currentValue={leftHamData.length > 0 ? leftHamData[leftHamData.length - 1].value : 0}
+                                    />
+                                </div>
+                            </div>
                         </div>
                     </div>
                 ) : (
