@@ -55,6 +55,7 @@ def _parse_raw_packet(role: str, data: bytes):
 
     if len(data) < PERIPHERAL_PACKET_SIZE:
         return None
+
     unpacked = struct.unpack(PERIPHERAL_PACKET_FORMAT, data[:PERIPHERAL_PACKET_SIZE])
     return (*unpacked, 0.0, 0.0)
 
@@ -65,14 +66,15 @@ def _make_notification_handler(role: str):
         if parsed is None:
             return
 
-        device_timestamp_ms, seq, roll_deg, emg_quad_percent, emg_ham_percent = parsed
+        device_timestamp_ms, seq, roll_deg, emg_quad_envelope, emg_ham_envelope = parsed
+
         imu_service.ingest_raw_sample(
             role=role,
             device_timestamp_ms=device_timestamp_ms,
             seq=seq,
             roll_deg=roll_deg,
-            emg_quad_percent=emg_quad_percent,
-            emg_ham_percent=emg_ham_percent,
+            emg_quad_envelope=emg_quad_envelope,
+            emg_ham_envelope=emg_ham_envelope,
         )
 
     return notification_handler
@@ -169,8 +171,8 @@ def stop_session():
                 "central_roll_deg",
                 "peripheral_roll_deg",
                 "knee_angle_deg",
-                "emg_quad_percent",
-                "emg_ham_percent",
+                "emg_quad_envelope",
+                "emg_ham_envelope",
                 "pair_dt_ms",
             ]
         )
@@ -181,8 +183,8 @@ def stop_session():
                     sample.central_roll_deg,
                     sample.peripheral_roll_deg,
                     sample.knee_angle_deg,
-                    sample.emg_quad_percent,
-                    sample.emg_ham_percent,
+                    sample.emg_quad_envelope,
+                    sample.emg_ham_envelope,
                     sample.pair_dt_ms,
                 ]
             )

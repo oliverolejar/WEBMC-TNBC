@@ -10,12 +10,18 @@ const API_BASE = 'http://localhost:8000';
 
 type EmgPoint = {
     time: number;
-    envelope: number;
-    activation: number;
-    percent: number;
+    quadEnvelope: number;
+    hamEnvelope: number;
 };
 
-const MAX_EMG_POINTS = 80;
+const MAX_EMG_POINTS = 120;
+
+const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(value, hi));
+
+const mapToPercent = (value: number, min: number, max: number) => {
+    if (max <= min) return 0;
+    return clamp(((value - min) / (max - min)) * 100, 0, 100);
+};
 
 const PatientDashboard = () => {
     const navigate = useNavigate();
@@ -25,13 +31,20 @@ const PatientDashboard = () => {
     const [deviceConnected, setDeviceConnected] = useState(false);
 
     const [emgData, setEmgData] = useState<EmgPoint[]>([]);
-    const [envelopeValue, setEnvelopeValue] = useState(0);
-    const [activationValue, setActivationValue] = useState(0);
-    const [percentValue, setPercentValue] = useState(0);
+    const [quadEnvelopeValue, setQuadEnvelopeValue] = useState(0);
+    const [hamEnvelopeValue, setHamEnvelopeValue] = useState(0);
+
+    const [quadMin, setQuadMin] = useState(36);
+    const [quadMax, setQuadMax] = useState(250);
+    const [hamMin, setHamMin] = useState(36);
+    const [hamMax, setHamMax] = useState(250);
 
     const [calibrationActive, setCalibrationActive] = useState(false);
     const [calibrationMessage, setCalibrationMessage] = useState('');
     const [isCalibrating, setIsCalibrating] = useState(false);
+
+    const quadPercentValue = mapToPercent(quadEnvelopeValue, quadMin, quadMax);
+    const hamPercentValue = mapToPercent(hamEnvelopeValue, hamMin, hamMax);
 
     useEffect(() => {
         const ws = new WebSocket(WS_URL);
@@ -43,47 +56,37 @@ const PatientDashboard = () => {
                 setKneeAngle(data.knee_angle_deg);
             }
 
-            const envelope =
-                typeof data.emg_debug_envelope === 'number'
-                    ? data.emg_debug_envelope
+            const quadEnvelope =
+                typeof data.emg_quad_envelope === 'number'
+                    ? data.emg_quad_envelope
                     : null;
 
-            const activation =
-                typeof data.emg_debug_activation === 'number'
-                    ? data.emg_debug_activation
+            const hamEnvelope =
+                typeof data.emg_ham_envelope === 'number'
+                    ? data.emg_ham_envelope
                     : null;
 
-            const percent =
-                typeof data.emg_debug_percent === 'number'
-                    ? data.emg_debug_percent
-                    : null;
-
-            if (envelope !== null) {
-                setEnvelopeValue(envelope);
+            if (quadEnvelope !== null) {
+                setQuadEnvelopeValue(quadEnvelope);
             }
 
-            if (activation !== null) {
-                setActivationValue(activation);
+            if (hamEnvelope !== null) {
+                setHamEnvelopeValue(hamEnvelope);
             }
 
-            if (percent !== null) {
-                setPercentValue(percent);
-            }
-
-            if (envelope !== null || activation !== null || percent !== null) {
+            if (quadEnvelope !== null || hamEnvelope !== null) {
                 setEmgData((prev) => {
                     const last =
                         prev.length > 0
                             ? prev[prev.length - 1]
-                            : { time: Date.now(), envelope: 0, activation: 0, percent: 0 };
+                            : { time: Date.now(), quadEnvelope: 0, hamEnvelope: 0 };
 
                     const next = [
                         ...prev,
                         {
                             time: Date.now(),
-                            envelope: envelope ?? last.envelope,
-                            activation: activation ?? last.activation,
-                            percent: percent ?? last.percent,
+                            quadEnvelope: quadEnvelope ?? last.quadEnvelope,
+                            hamEnvelope: hamEnvelope ?? last.hamEnvelope,
                         },
                     ];
 
@@ -160,7 +163,7 @@ const PatientDashboard = () => {
             }
 
             setCalibrationActive(true);
-            setCalibrationMessage('Calibration successful. Current roll pose is now zeroed.');
+            setCalibrationMessage('Calibration successful. Current pose is now zeroed.');
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Calibration failed';
             setCalibrationMessage(message);
@@ -271,18 +274,21 @@ const PatientDashboard = () => {
                 </div>
             )}
 
-            <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="mb-4 grid grid-cols-1 md:grid-cols-5 gap-4">
                 <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
-                    Live knee angle: {kneeAngle.toFixed(2)}°
+                    Knee angle: {kneeAngle.toFixed(2)}°
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
-                    Envelope: {envelopeValue.toFixed(1)}
+                    Quad Env: {quadEnvelopeValue.toFixed(1)}
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
-                    Activation: {activationValue.toFixed(0)}
+                    Ham Env: {hamEnvelopeValue.toFixed(1)}
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
-                    Percent: {percentValue.toFixed(1)}
+                    Quad %: {quadPercentValue.toFixed(1)}
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
+                    Ham %: {hamPercentValue.toFixed(1)}
                 </div>
             </div>
 
@@ -300,12 +306,20 @@ const PatientDashboard = () => {
 
                         <div className="h-full min-h-[400px]">
                             <EMGChart
-                                label=""
                                 data={emgData}
                                 isConnected={deviceConnected}
-                                envelopeCurrentValue={envelopeValue}
-                                activationCurrentValue={activationValue}
-                                percentCurrentValue={percentValue}
+                                quadEnvelopeCurrentValue={quadEnvelopeValue}
+                                hamEnvelopeCurrentValue={hamEnvelopeValue}
+                                quadPercentCurrentValue={quadPercentValue}
+                                hamPercentCurrentValue={hamPercentValue}
+                                quadMin={quadMin}
+                                quadMax={quadMax}
+                                hamMin={hamMin}
+                                hamMax={hamMax}
+                                onQuadMinChange={setQuadMin}
+                                onQuadMaxChange={setQuadMax}
+                                onHamMinChange={setHamMin}
+                                onHamMaxChange={setHamMax}
                             />
                         </div>
                     </div>

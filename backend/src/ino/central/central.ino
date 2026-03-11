@@ -8,7 +8,7 @@ const char* rawCharacteristicUuid = "19b10011-e8f2-537e-4f6c-d104768a1214";
 struct CentralRawPacket {
   uint32_t deviceTimestampMs;
   uint32_t seq;
-  float roll;              // REAL roll / knee angle
+  float roll;              // REAL central roll again
   float emgQuadPercent;    // carries QUAD ENVELOPE
   float emgHamPercent;     // carries HAMSTRING ENVELOPE
 };
@@ -49,6 +49,7 @@ const int EMG2_ENVELOPE_BASELINE = 36;
 // Shared EMG settings
 const float ENVELOPE_ALPHA = 0.10f;
 const unsigned long EMG_SAMPLE_INTERVAL_MS = 5;
+const int EMG_PERCENT_FULL_SCALE = 600;
 
 unsigned long lastEmgSampleMs = 0;
 
@@ -114,6 +115,12 @@ void calibrateGyro() {
   Serial.println("Gyro calibration complete.");
 }
 
+float activationToPercent(int activation) {
+  if (activation < 0) activation = 0;
+  if (activation > EMG_PERCENT_FULL_SCALE) activation = EMG_PERCENT_FULL_SCALE;
+  return (activation / (float)EMG_PERCENT_FULL_SCALE) * 100.0f;
+}
+
 void updateEmgs(unsigned long now) {
   if (now - lastEmgSampleMs < EMG_SAMPLE_INTERVAL_MS) {
     return;
@@ -130,6 +137,7 @@ void updateEmgs(unsigned long now) {
   emg1Envelope = (1.0f - ENVELOPE_ALPHA) * emg1Envelope + ENVELOPE_ALPHA * rectified1;
   emg1Activation = (int)emg1Envelope - EMG1_ENVELOPE_BASELINE;
   if (emg1Activation < 0) emg1Activation = 0;
+  emg1Percent = activationToPercent(emg1Activation);
 
   // ---- EMG 2: Hamstring on A3 ----
   int raw2 = analogRead(EMG2_PIN);
@@ -141,6 +149,7 @@ void updateEmgs(unsigned long now) {
   emg2Envelope = (1.0f - ENVELOPE_ALPHA) * emg2Envelope + ENVELOPE_ALPHA * rectified2;
   emg2Activation = (int)emg2Envelope - EMG2_ENVELOPE_BASELINE;
   if (emg2Activation < 0) emg2Activation = 0;
+  emg2Percent = activationToPercent(emg2Activation);
 }
 
 void setup() {
@@ -209,19 +218,21 @@ void loop() {
     ahrs.update();
 
     rollF = (1.0f - smooth) * rollF + smooth * ahrs.angles.roll;
+    rollF = wrap180(rollF);
 
     CentralRawPacket packet;
     packet.deviceTimestampMs = now;
     packet.seq = packetSeq++;
 
-    // FINAL PAYLOAD
-    packet.roll = rollF;                  // knee angle / roll
+    // FINAL PAYLOAD:
+    packet.roll = rollF;                  // real central roll again
     packet.emgQuadPercent = emg1Envelope; // quad envelope
     packet.emgHamPercent = emg2Envelope;  // ham envelope
 
     rawCharacteristic.writeValue((const uint8_t*)&packet, sizeof(CentralRawPacket));
 
-    // Serial: timestamp, seq, roll, quadEnvelope, hamEnvelope
+    // Serial output:
+    // timestamp, seq, roll, quadEnvelope, hamEnvelope
     Serial.print(packet.deviceTimestampMs);
     Serial.print(",");
     Serial.print(packet.seq);

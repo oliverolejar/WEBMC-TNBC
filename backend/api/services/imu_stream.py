@@ -1,175 +1,240 @@
-import asyncio
-import struct
-import threading
+from __future__ import annotations
+
 import time
 from collections import deque
-
-from bleak import BleakClient, BleakScanner
-
-RAW_SERVICE_UUID = "19b10010-e8f2-537e-4f6c-d104768a1214"
-RAW_CHARACTERISTIC_UUID = "19b10011-e8f2-537e-4f6c-d104768a1214"
-
-PACKET_FORMAT = "<IIfff"
-PACKET_SIZE = struct.calcsize(PACKET_FORMAT)
-
-_latest_lock = threading.Lock()
-_history_lock = threading.Lock()
-
-_stop_event = threading.Event()
-_ble_thread = None
-_history_start_time = None
-
-_latest_data = {
-    "device_timestamp_ms": None,
-    "seq": None,
-    "knee_angle_deg": 0.0,
-    "quad_envelope": 0.0,
-    "ham_envelope": 0.0,
-    "device_connected": False,
-    "last_packet_time": None,
-}
-
-_history = {
-    "time_s": deque(maxlen=600),
-    "knee_angle_deg": deque(maxlen=600),
-    "quad_envelope": deque(maxlen=600),
-    "ham_envelope": deque(maxlen=600),
-}
+from dataclasses import dataclass, asdict
+from typing import Optional
 
 
-def clamp(value, lo, hi):
+def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(value, hi))
 
 
-def map_to_percent(value, min_value, max_value):
-    if max_value <= min_value:
-        return 0.0
-    pct = ((value - min_value) / (max_value - min_value)) * 100.0
-    return clamp(pct, 0.0, 100.0)
+def wrap180(angle: float) -> float:
+    while angle > 180.0:
+        angle -= 360.0
+    while angle < -180.0:
+        angle += 360.0
+    return angle
 
 
-def get_latest_data():
-    with _latest_lock:
-        return dict(_latest_data)
+@dataclass
+class RawSample:
+    role: str
+    timestamp_utc: float
+    device_timestamp_ms: int
+    seq: int
+    roll_deg: float
+    emg_quad_envelope: float = 0.0
+    emg_ham_envelope: float = 0.0
 
 
-def get_history():
-    with _history_lock:
-        return {
-            "time_s": list(_history["time_s"]),
-            "knee_angle_deg": list(_history["knee_angle_deg"]),
-            "quad_envelope": list(_history["quad_envelope"]),
-            "ham_envelope": list(_history["ham_envelope"]),
+@dataclass
+class PairedSample:
+    timestamp_utc: float
+    central_roll_deg: float
+    peripheral_roll_deg: float
+    knee_angle_deg: float
+    emg_quad_envelope: float
+    emg_ham_envelope: float
+    pair_dt_ms: float
+
+
+class ImuStreamService:
+    def __init__(self, pair_window_ms: int = 40):
+        self.pair_window_ms = pair_window_ms
+
+        self.central_connected = False
+        self.peripheral_connected = False
+        self.device_connected = False
+
+        self.recording = False
+        self.calibration_active = False
+
+        self.central_zero_deg = 0.0
+        self.peripheral_zero_deg = 0.0
+
+        self.latest_central: Optional[RawSample] = None
+        self.latest_peripheral: Optional[RawSample] = None
+
+        self.latest_payload = {
+            "timestamp_utc": None,
+            "device_connected": False,
+            "central_connected": False,
+            "peripheral_connected": False,
+            "calibration_active": False,
+            "central_roll_deg": 0.0,
+            "peripheral_roll_deg": 0.0,
+            "knee_angle_deg": 0.0,
+            "emg_quad_envelope": 0.0,
+            "emg_ham_envelope": 0.0,
+            "pair_dt_ms": None,
         }
 
+        self._latest_raw_event = {
+            "event_id": 0,
+            "role": None,
+            "device_timestamp_ms": None,
+            "seq": None,
+            "roll_deg": 0.0,
+            "emg_quad_envelope": 0.0,
+            "emg_ham_envelope": 0.0,
+            "timestamp_utc": None,
+        }
 
-def _handle_notification(_, data: bytearray):
-    global _history_start_time
+        self._session_rows: list[PairedSample] = []
+        self._recent_pairs = deque(maxlen=400)
 
-    if len(data) < PACKET_SIZE:
-        return
+    def set_connected(self, role: str, connected: bool):
+        if role == "central":
+            self.central_connected = connected
+        elif role == "peripheral":
+            self.peripheral_connected = connected
 
-    device_timestamp_ms, seq, roll, quad_env, ham_env = struct.unpack(
-        PACKET_FORMAT, data[:PACKET_SIZE]
-    )
+        self.device_connected = self.central_connected and self.peripheral_connected
+        self.latest_payload["device_connected"] = self.device_connected
+        self.latest_payload["central_connected"] = self.central_connected
+        self.latest_payload["peripheral_connected"] = self.peripheral_connected
+        self.latest_payload["calibration_active"] = self.calibration_active
 
-    now = time.time()
+    def ingest_raw_sample(
+        self,
+        role: str,
+        device_timestamp_ms: int,
+        seq: int,
+        roll_deg: float,
+        emg_quad_envelope: float = 0.0,
+        emg_ham_envelope: float = 0.0,
+    ):
+        now = time.time()
 
-    with _latest_lock:
-        _latest_data["device_timestamp_ms"] = device_timestamp_ms
-        _latest_data["seq"] = seq
-        _latest_data["knee_angle_deg"] = roll
-        _latest_data["quad_envelope"] = quad_env
-        _latest_data["ham_envelope"] = ham_env
-        _latest_data["device_connected"] = True
-        _latest_data["last_packet_time"] = now
+        sample = RawSample(
+            role=role,
+            timestamp_utc=now,
+            device_timestamp_ms=device_timestamp_ms,
+            seq=seq,
+            roll_deg=roll_deg,
+            emg_quad_envelope=emg_quad_envelope,
+            emg_ham_envelope=emg_ham_envelope,
+        )
 
-    with _history_lock:
-        if _history_start_time is None:
-            _history_start_time = now
+        if role == "central":
+            self.latest_central = sample
+        else:
+            self.latest_peripheral = sample
 
-        t_rel = now - _history_start_time
-        _history["time_s"].append(t_rel)
-        _history["knee_angle_deg"].append(roll)
-        _history["quad_envelope"].append(quad_env)
-        _history["ham_envelope"].append(ham_env)
+        self._latest_raw_event = {
+            "event_id": self._latest_raw_event["event_id"] + 1,
+            "role": role,
+            "device_timestamp_ms": device_timestamp_ms,
+            "seq": seq,
+            "roll_deg": roll_deg,
+            "emg_quad_envelope": emg_quad_envelope,
+            "emg_ham_envelope": emg_ham_envelope,
+            "timestamp_utc": now,
+        }
 
+        self._update_latest_payload()
 
-async def _find_device():
-    devices = await BleakScanner.discover(timeout=5.0)
+    def _update_latest_payload(self):
+        central = self.latest_central
+        peripheral = self.latest_peripheral
 
-    for d in devices:
-        name = d.name or ""
-        if "CentralIMU" in name or "Nano 33 BLE" in name:
-            return d
+        if central is None:
+            self.latest_payload["device_connected"] = self.device_connected
+            self.latest_payload["central_connected"] = self.central_connected
+            self.latest_payload["peripheral_connected"] = self.peripheral_connected
+            self.latest_payload["calibration_active"] = self.calibration_active
+            return
 
-    for d in devices:
-        uuids = d.metadata.get("uuids", []) if d.metadata else []
-        uuids_lower = [u.lower() for u in uuids]
-        if RAW_SERVICE_UUID.lower() in uuids_lower:
-            return d
+        central_roll = central.roll_deg
+        peripheral_roll = peripheral.roll_deg if peripheral is not None else 0.0
 
-    return None
+        central_rel = wrap180(central_roll - self.central_zero_deg)
+        peripheral_rel = wrap180(peripheral_roll - self.peripheral_zero_deg)
 
+        # Knee angle from relative roll difference between central and peripheral
+        knee_angle = abs(wrap180(central_rel - peripheral_rel))
 
-async def _ble_main():
-    while not _stop_event.is_set():
-        try:
-            device = await _find_device()
-            if device is None:
-                with _latest_lock:
-                    _latest_data["device_connected"] = False
-                await asyncio.sleep(2.0)
-                continue
+        pair_dt_ms = None
+        if central is not None and peripheral is not None:
+            pair_dt_ms = abs(central.device_timestamp_ms - peripheral.device_timestamp_ms)
 
-            async with BleakClient(device.address) as client:
-                with _latest_lock:
-                    _latest_data["device_connected"] = True
+        self.latest_payload = {
+            "timestamp_utc": central.timestamp_utc,
+            "device_connected": self.device_connected,
+            "central_connected": self.central_connected,
+            "peripheral_connected": self.peripheral_connected,
+            "calibration_active": self.calibration_active,
+            "central_roll_deg": central_roll,
+            "peripheral_roll_deg": peripheral_roll,
+            "knee_angle_deg": knee_angle,
+            "emg_quad_envelope": central.emg_quad_envelope,
+            "emg_ham_envelope": central.emg_ham_envelope,
+            "pair_dt_ms": pair_dt_ms,
+        }
 
-                await client.start_notify(RAW_CHARACTERISTIC_UUID, _handle_notification)
+        if (
+            self.recording
+            and central is not None
+            and peripheral is not None
+            and pair_dt_ms is not None
+            and pair_dt_ms <= self.pair_window_ms
+        ):
+            row = PairedSample(
+                timestamp_utc=central.timestamp_utc,
+                central_roll_deg=central_roll,
+                peripheral_roll_deg=peripheral_roll,
+                knee_angle_deg=knee_angle,
+                emg_quad_envelope=central.emg_quad_envelope,
+                emg_ham_envelope=central.emg_ham_envelope,
+                pair_dt_ms=pair_dt_ms,
+            )
+            self._session_rows.append(row)
+            self._recent_pairs.append(row)
 
-                while client.is_connected and not _stop_event.is_set():
-                    await asyncio.sleep(0.2)
+    def latest_dict(self):
+        payload = dict(self.latest_payload)
+        payload["device_connected"] = self.device_connected
+        payload["central_connected"] = self.central_connected
+        payload["peripheral_connected"] = self.peripheral_connected
+        payload["calibration_active"] = self.calibration_active
+        return payload
 
-                try:
-                    await client.stop_notify(RAW_CHARACTERISTIC_UUID)
-                except Exception:
-                    pass
+    def latest_raw_event_dict(self):
+        return dict(self._latest_raw_event)
 
-        except Exception as e:
-            print(f"[imu_stream.py] BLE error: {e}")
+    def calibrate_current_pose(self):
+        if self.latest_central is None or self.latest_peripheral is None:
+            raise RuntimeError("Both central and peripheral IMUs must be connected before calibration.")
 
-        with _latest_lock:
-            _latest_data["device_connected"] = False
+        self.central_zero_deg = self.latest_central.roll_deg
+        self.peripheral_zero_deg = self.latest_peripheral.roll_deg
+        self.calibration_active = True
+        self._update_latest_payload()
 
-        await asyncio.sleep(2.0)
+        return {
+            "message": "calibration_successful",
+            "central_zero_deg": self.central_zero_deg,
+            "peripheral_zero_deg": self.peripheral_zero_deg,
+            "calibration_active": True,
+        }
 
+    def reset_calibration(self):
+        self.central_zero_deg = 0.0
+        self.peripheral_zero_deg = 0.0
+        self.calibration_active = False
+        self._update_latest_payload()
 
-def _thread_target():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_ble_main())
-    finally:
-        pending = asyncio.all_tasks(loop=loop)
-        for task in pending:
-            task.cancel()
-        try:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        except Exception:
-            pass
-        loop.close()
+        return {
+            "message": "calibration_reset",
+            "calibration_active": False,
+        }
 
+    def start_recording(self):
+        self.recording = True
+        self._session_rows = []
 
-def start_ble():
-    global _ble_thread
-    if _ble_thread is not None and _ble_thread.is_alive():
-        return
-
-    _stop_event.clear()
-    _ble_thread = threading.Thread(target=_thread_target, daemon=True)
-    _ble_thread.start()
-
-
-def stop_ble():
-    _stop_event.set()
+    def stop_recording(self):
+        self.recording = False
+        return list(self._session_rows)
