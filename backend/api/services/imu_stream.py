@@ -1,302 +1,175 @@
-from __future__ import annotations
-
-from collections import deque
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+import asyncio
+import struct
+import threading
 import time
-from typing import Optional
+from collections import deque
 
-ROLE_CENTRAL = "central"
-ROLE_PERIPHERAL = "peripheral"
-ROLES = (ROLE_CENTRAL, ROLE_PERIPHERAL)
+from bleak import BleakClient, BleakScanner
 
+RAW_SERVICE_UUID = "19b10010-e8f2-537e-4f6c-d104768a1214"
+RAW_CHARACTERISTIC_UUID = "19b10011-e8f2-537e-4f6c-d104768a1214"
 
-def wrap180(angle_deg: float) -> float:
-    angle = float(angle_deg)
-    while angle > 180.0:
-        angle -= 360.0
-    while angle < -180.0:
-        angle += 360.0
-    return angle
+PACKET_FORMAT = "<IIfff"
+PACKET_SIZE = struct.calcsize(PACKET_FORMAT)
 
+_latest_lock = threading.Lock()
+_history_lock = threading.Lock()
 
-def angle_diff_deg(a_deg: float, b_deg: float) -> float:
-    return wrap180(float(a_deg) - float(b_deg))
+_stop_event = threading.Event()
+_ble_thread = None
+_history_start_time = None
 
+_latest_data = {
+    "device_timestamp_ms": None,
+    "seq": None,
+    "knee_angle_deg": 0.0,
+    "quad_envelope": 0.0,
+    "ham_envelope": 0.0,
+    "device_connected": False,
+    "last_packet_time": None,
+}
 
-@dataclass
-class RawImuSample:
-    role: str
-    timestamp_utc: str
-    host_timestamp_ms: int
-    device_timestamp_ms: int
-    seq: int
-    roll_deg: float
-    emg_quad_percent: float
-    emg_ham_percent: float
-
-
-@dataclass
-class KneeSample:
-    timestamp_utc: str
-    central_roll_deg: float
-    peripheral_roll_deg: float
-    knee_angle_deg: float
-    emg_quad_percent: float
-    emg_ham_percent: float
-    pair_dt_ms: int
+_history = {
+    "time_s": deque(maxlen=600),
+    "knee_angle_deg": deque(maxlen=600),
+    "quad_envelope": deque(maxlen=600),
+    "ham_envelope": deque(maxlen=600),
+}
 
 
-class ImuStreamService:
-    def __init__(self, pair_window_ms: int = 40, buffer_size: int = 300) -> None:
-        self.pair_window_ms = int(pair_window_ms)
-        self.buffer_size = int(buffer_size)
+def clamp(value, lo, hi):
+    return max(lo, min(value, hi))
 
-        self.latest_knee: Optional[KneeSample] = None
-        self.latest_raw_by_role: dict[str, Optional[RawImuSample]] = {role: None for role in ROLES}
-        self.pending_by_role: dict[str, deque[RawImuSample]] = {
-            role: deque(maxlen=self.buffer_size) for role in ROLES
-        }
-        self.connected_by_role: dict[str, bool] = {role: False for role in ROLES}
 
-        self.recording: bool = False
-        self.session_rows: list[KneeSample] = []
+def map_to_percent(value, min_value, max_value):
+    if max_value <= min_value:
+        return 0.0
+    pct = ((value - min_value) / (max_value - min_value)) * 100.0
+    return clamp(pct, 0.0, 100.0)
 
-        self.latest_raw_event_id: int = 0
-        self.latest_raw_event: Optional[dict] = None
 
-        self.roll_zero_by_role: dict[str, float] = {role: 0.0 for role in ROLES}
-        self.calibration_active: bool = False
-        self.calibration_timestamp_utc: Optional[str] = None
+def get_latest_data():
+    with _latest_lock:
+        return dict(_latest_data)
 
-    @property
-    def central_connected(self) -> bool:
-        return self.connected_by_role[ROLE_CENTRAL]
 
-    @property
-    def peripheral_connected(self) -> bool:
-        return self.connected_by_role[ROLE_PERIPHERAL]
-
-    @property
-    def device_connected(self) -> bool:
-        return self.central_connected and self.peripheral_connected
-
-    def _validate_role(self, role: str) -> None:
-        if role not in ROLES:
-            raise ValueError(f"invalid role '{role}'")
-
-    def _calibrated_roll(self, role: str, raw_roll_deg: float) -> float:
-        return wrap180(float(raw_roll_deg) - float(self.roll_zero_by_role[role]))
-
-    def set_connected(self, role: str, connected: bool) -> None:
-        self._validate_role(role)
-        is_connected = bool(connected)
-        self.connected_by_role[role] = is_connected
-
-        if not is_connected:
-            self.latest_knee = None
-            self.latest_raw_by_role[role] = None
-            self.pending_by_role[role].clear()
-
-    def ingest_raw_sample(
-        self,
-        role: str,
-        device_timestamp_ms: int,
-        seq: int,
-        roll_deg: float,
-        emg_quad_percent: float = 0.0,
-        emg_ham_percent: float = 0.0,
-        host_timestamp_ms: Optional[int] = None,
-    ) -> tuple[RawImuSample, Optional[KneeSample]]:
-        self._validate_role(role)
-
-        if host_timestamp_ms is None:
-            host_timestamp_ms = time.monotonic_ns() // 1_000_000
-
-        sample = RawImuSample(
-            role=role,
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
-            host_timestamp_ms=int(host_timestamp_ms),
-            device_timestamp_ms=int(device_timestamp_ms),
-            seq=int(seq),
-            roll_deg=float(roll_deg),
-            emg_quad_percent=max(0.0, min(100.0, float(emg_quad_percent))),
-            emg_ham_percent=max(0.0, min(100.0, float(emg_ham_percent))),
-        )
-
-        self.latest_raw_by_role[role] = sample
-        self.pending_by_role[role].append(sample)
-
-        self.latest_raw_event_id += 1
-        self.latest_raw_event = {
-            "event_id": self.latest_raw_event_id,
-            **asdict(sample),
-            "calibrated_roll_deg": self._calibrated_roll(role, sample.roll_deg),
-            "central_connected": self.central_connected,
-            "peripheral_connected": self.peripheral_connected,
-            "device_connected": self.device_connected,
-            "recording": self.recording,
-            "calibration_active": self.calibration_active,
-        }
-
-        knee_sample = self._try_pair(role)
-        if knee_sample is not None:
-            self.latest_knee = knee_sample
-            if self.recording:
-                self.session_rows.append(knee_sample)
-
-        self._prune_pending(now_ms=sample.host_timestamp_ms)
-        return sample, knee_sample
-
-    def _try_pair(self, role: str) -> Optional[KneeSample]:
-        if not self.device_connected:
-            return None
-
-        other_role = ROLE_PERIPHERAL if role == ROLE_CENTRAL else ROLE_CENTRAL
-        source_queue = self.pending_by_role[role]
-        other_queue = self.pending_by_role[other_role]
-
-        if not source_queue or not other_queue:
-            return None
-
-        source = source_queue[-1]
-
-        best_match = None
-        best_dt_ms = self.pair_window_ms + 1
-        for candidate in other_queue:
-            dt_ms = abs(source.host_timestamp_ms - candidate.host_timestamp_ms)
-            if dt_ms < best_dt_ms:
-                best_dt_ms = dt_ms
-                best_match = candidate
-
-        if best_match is None or best_dt_ms > self.pair_window_ms:
-            return None
-
-        source_queue.pop()
-        other_queue.remove(best_match)
-
-        if role == ROLE_CENTRAL:
-            central_sample = source
-            peripheral_sample = best_match
-        else:
-            central_sample = best_match
-            peripheral_sample = source
-
-        central_roll_cal = self._calibrated_roll(ROLE_CENTRAL, central_sample.roll_deg)
-        peripheral_roll_cal = self._calibrated_roll(ROLE_PERIPHERAL, peripheral_sample.roll_deg)
-        knee_angle = angle_diff_deg(central_roll_cal, peripheral_roll_cal)
-
-        return KneeSample(
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
-            central_roll_deg=central_roll_cal,
-            peripheral_roll_deg=peripheral_roll_cal,
-            knee_angle_deg=knee_angle,
-            emg_quad_percent=central_sample.emg_quad_percent,
-            emg_ham_percent=central_sample.emg_ham_percent,
-            pair_dt_ms=int(best_dt_ms),
-        )
-
-    def _prune_pending(self, now_ms: int) -> None:
-        cutoff_ms = int(now_ms) - (self.pair_window_ms * 5)
-        for role in ROLES:
-            queue = self.pending_by_role[role]
-            while queue and queue[0].host_timestamp_ms < cutoff_ms:
-                queue.popleft()
-
-    def calibrate_current_pose(self) -> dict:
-        if not self.device_connected:
-            raise RuntimeError("Both devices must be connected before calibration.")
-
-        central_sample = self.latest_raw_by_role[ROLE_CENTRAL]
-        peripheral_sample = self.latest_raw_by_role[ROLE_PERIPHERAL]
-
-        if central_sample is None or peripheral_sample is None:
-            raise RuntimeError("No live IMU samples available yet for calibration.")
-
-        self.roll_zero_by_role[ROLE_CENTRAL] = float(central_sample.roll_deg)
-        self.roll_zero_by_role[ROLE_PERIPHERAL] = float(peripheral_sample.roll_deg)
-        self.calibration_active = True
-        self.calibration_timestamp_utc = datetime.now(timezone.utc).isoformat()
-        self.latest_knee = None
-
+def get_history():
+    with _history_lock:
         return {
-            "message": "calibrated",
-            "calibration_active": self.calibration_active,
-            "calibration_timestamp_utc": self.calibration_timestamp_utc,
-            "central_zero_roll_deg": self.roll_zero_by_role[ROLE_CENTRAL],
-            "peripheral_zero_roll_deg": self.roll_zero_by_role[ROLE_PERIPHERAL],
+            "time_s": list(_history["time_s"]),
+            "knee_angle_deg": list(_history["knee_angle_deg"]),
+            "quad_envelope": list(_history["quad_envelope"]),
+            "ham_envelope": list(_history["ham_envelope"]),
         }
 
-    def reset_calibration(self) -> dict:
-        self.roll_zero_by_role = {role: 0.0 for role in ROLES}
-        self.calibration_active = False
-        self.calibration_timestamp_utc = None
-        self.latest_knee = None
 
-        return {
-            "message": "calibration_reset",
-            "calibration_active": self.calibration_active,
-            "central_zero_roll_deg": self.roll_zero_by_role[ROLE_CENTRAL],
-            "peripheral_zero_roll_deg": self.roll_zero_by_role[ROLE_PERIPHERAL],
-        }
+def _handle_notification(_, data: bytearray):
+    global _history_start_time
 
-    def start_recording(self) -> None:
-        self.session_rows = []
-        self.recording = True
+    if len(data) < PACKET_SIZE:
+        return
 
-    def stop_recording(self) -> list[KneeSample]:
-        self.recording = False
-        return list(self.session_rows)
+    device_timestamp_ms, seq, roll, quad_env, ham_env = struct.unpack(
+        PACKET_FORMAT, data[:PACKET_SIZE]
+    )
 
-    def latest_dict(self) -> dict:
-        central_sample = self.latest_raw_by_role[ROLE_CENTRAL]
-        peripheral_sample = self.latest_raw_by_role[ROLE_PERIPHERAL]
-        knee_available = self.latest_knee is not None and self.device_connected
+    now = time.time()
 
-        payload = {
-            "timestamp": self.latest_knee.timestamp_utc if knee_available else None,
-            "knee_angle_deg": self.latest_knee.knee_angle_deg if knee_available else None,
-            "emg_quad_percent": self.latest_knee.emg_quad_percent if knee_available else (
-                central_sample.emg_quad_percent if central_sample is not None else 0.0
-            ),
-            "emg_ham_percent": self.latest_knee.emg_ham_percent if knee_available else (
-                central_sample.emg_ham_percent if central_sample is not None else 0.0
-            ),
-            "device_timestamp_ms": None,
-            "device_connected": self.device_connected,
-            "central_connected": self.central_connected,
-            "peripheral_connected": self.peripheral_connected,
-            "recording": self.recording,
-            "knee_available": knee_available,
-            "calibration_active": self.calibration_active,
-            "calibration_timestamp_utc": self.calibration_timestamp_utc,
-            "central_zero_roll_deg": self.roll_zero_by_role[ROLE_CENTRAL],
-            "peripheral_zero_roll_deg": self.roll_zero_by_role[ROLE_PERIPHERAL],
-        }
+    with _latest_lock:
+        _latest_data["device_timestamp_ms"] = device_timestamp_ms
+        _latest_data["seq"] = seq
+        _latest_data["knee_angle_deg"] = roll
+        _latest_data["quad_envelope"] = quad_env
+        _latest_data["ham_envelope"] = ham_env
+        _latest_data["device_connected"] = True
+        _latest_data["last_packet_time"] = now
 
-        if central_sample is not None:
-            payload["device_timestamp_ms"] = central_sample.device_timestamp_ms
-            payload["central_roll_raw_deg"] = central_sample.roll_deg
-            payload["central_roll_calibrated_deg"] = self._calibrated_roll(
-                ROLE_CENTRAL, central_sample.roll_deg
-            )
-            payload["central_emg_quad_percent"] = central_sample.emg_quad_percent
-            payload["central_emg_ham_percent"] = central_sample.emg_ham_percent
+    with _history_lock:
+        if _history_start_time is None:
+            _history_start_time = now
 
-        if peripheral_sample is not None:
-            payload["peripheral_roll_raw_deg"] = peripheral_sample.roll_deg
-            payload["peripheral_roll_calibrated_deg"] = self._calibrated_roll(
-                ROLE_PERIPHERAL, peripheral_sample.roll_deg
-            )
+        t_rel = now - _history_start_time
+        _history["time_s"].append(t_rel)
+        _history["knee_angle_deg"].append(roll)
+        _history["quad_envelope"].append(quad_env)
+        _history["ham_envelope"].append(ham_env)
 
-        if knee_available:
-            payload["central_roll_deg"] = self.latest_knee.central_roll_deg
-            payload["peripheral_roll_deg"] = self.latest_knee.peripheral_roll_deg
-            payload["pair_dt_ms"] = self.latest_knee.pair_dt_ms
 
-        return payload
+async def _find_device():
+    devices = await BleakScanner.discover(timeout=5.0)
 
-    def latest_raw_event_dict(self) -> dict:
-        if self.latest_raw_event is None:
-            return {"event_id": 0}
-        return dict(self.latest_raw_event)
+    for d in devices:
+        name = d.name or ""
+        if "CentralIMU" in name or "Nano 33 BLE" in name:
+            return d
+
+    for d in devices:
+        uuids = d.metadata.get("uuids", []) if d.metadata else []
+        uuids_lower = [u.lower() for u in uuids]
+        if RAW_SERVICE_UUID.lower() in uuids_lower:
+            return d
+
+    return None
+
+
+async def _ble_main():
+    while not _stop_event.is_set():
+        try:
+            device = await _find_device()
+            if device is None:
+                with _latest_lock:
+                    _latest_data["device_connected"] = False
+                await asyncio.sleep(2.0)
+                continue
+
+            async with BleakClient(device.address) as client:
+                with _latest_lock:
+                    _latest_data["device_connected"] = True
+
+                await client.start_notify(RAW_CHARACTERISTIC_UUID, _handle_notification)
+
+                while client.is_connected and not _stop_event.is_set():
+                    await asyncio.sleep(0.2)
+
+                try:
+                    await client.stop_notify(RAW_CHARACTERISTIC_UUID)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"[imu_stream.py] BLE error: {e}")
+
+        with _latest_lock:
+            _latest_data["device_connected"] = False
+
+        await asyncio.sleep(2.0)
+
+
+def _thread_target():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_ble_main())
+    finally:
+        pending = asyncio.all_tasks(loop=loop)
+        for task in pending:
+            task.cancel()
+        try:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
+        loop.close()
+
+
+def start_ble():
+    global _ble_thread
+    if _ble_thread is not None and _ble_thread.is_alive():
+        return
+
+    _stop_event.clear()
+    _ble_thread = threading.Thread(target=_thread_target, daemon=True)
+    _ble_thread.start()
+
+
+def stop_ble():
+    _stop_event.set()

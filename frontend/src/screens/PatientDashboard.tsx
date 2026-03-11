@@ -10,8 +10,9 @@ const API_BASE = 'http://localhost:8000';
 
 type EmgPoint = {
     time: number;
-    quad: number;
-    ham: number;
+    envelope: number;
+    activation: number;
+    percent: number;
 };
 
 const MAX_EMG_POINTS = 80;
@@ -22,9 +23,11 @@ const PatientDashboard = () => {
 
     const [kneeAngle, setKneeAngle] = useState(0);
     const [deviceConnected, setDeviceConnected] = useState(false);
+
     const [emgData, setEmgData] = useState<EmgPoint[]>([]);
-    const [emgQuadPercent, setEmgQuadPercent] = useState(0);
-    const [emgHamPercent, setEmgHamPercent] = useState(0);
+    const [envelopeValue, setEnvelopeValue] = useState(0);
+    const [activationValue, setActivationValue] = useState(0);
+    const [percentValue, setPercentValue] = useState(0);
 
     const [calibrationActive, setCalibrationActive] = useState(false);
     const [calibrationMessage, setCalibrationMessage] = useState('');
@@ -40,32 +43,50 @@ const PatientDashboard = () => {
                 setKneeAngle(data.knee_angle_deg);
             }
 
-            const quad = typeof data.emg_quad_percent === 'number'
-                ? Math.max(0, Math.min(100, data.emg_quad_percent))
-                : null;
+            const envelope =
+                typeof data.emg_debug_envelope === 'number'
+                    ? data.emg_debug_envelope
+                    : null;
 
-            const ham = typeof data.emg_ham_percent === 'number'
-                ? Math.max(0, Math.min(100, data.emg_ham_percent))
-                : null;
+            const activation =
+                typeof data.emg_debug_activation === 'number'
+                    ? data.emg_debug_activation
+                    : null;
 
-            if (quad !== null) {
-                setEmgQuadPercent(quad);
+            const percent =
+                typeof data.emg_debug_percent === 'number'
+                    ? data.emg_debug_percent
+                    : null;
+
+            if (envelope !== null) {
+                setEnvelopeValue(envelope);
             }
 
-            if (ham !== null) {
-                setEmgHamPercent(ham);
+            if (activation !== null) {
+                setActivationValue(activation);
             }
 
-            if (quad !== null || ham !== null) {
+            if (percent !== null) {
+                setPercentValue(percent);
+            }
+
+            if (envelope !== null || activation !== null || percent !== null) {
                 setEmgData((prev) => {
+                    const last =
+                        prev.length > 0
+                            ? prev[prev.length - 1]
+                            : { time: Date.now(), envelope: 0, activation: 0, percent: 0 };
+
                     const next = [
                         ...prev,
                         {
                             time: Date.now(),
-                            quad: quad ?? emgQuadPercent,
-                            ham: ham ?? emgHamPercent,
+                            envelope: envelope ?? last.envelope,
+                            activation: activation ?? last.activation,
+                            percent: percent ?? last.percent,
                         },
                     ];
+
                     return next.length > MAX_EMG_POINTS
                         ? next.slice(next.length - MAX_EMG_POINTS)
                         : next;
@@ -88,7 +109,7 @@ const PatientDashboard = () => {
         return () => {
             ws.close();
         };
-    }, [emgQuadPercent, emgHamPercent]);
+    }, []);
 
     useEffect(() => {
         let isMounted = true;
@@ -191,24 +212,13 @@ const PatientDashboard = () => {
                             <option value="outlook">Recovery Outlook</option>
                         </select>
                         <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
-                            <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                            <svg
+                                className="fill-current h-4 w-4"
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                            >
                                 <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
                             </svg>
-                        </div>
-                    </div>
-
-                    <div className="flex items-center gap-4 text-sm border-l border-slate-200 pl-6">
-                        <div className="flex flex-col">
-                            <span className="text-slate-400 text-xs uppercase tracking-wider font-semibold">Patient</span>
-                            <span className="font-medium text-slate-900">Sarah Jenkins</span>
-                        </div>
-                        <div className="flex flex-col">
-                            <span className="text-slate-400 text-xs uppercase tracking-wider font-semibold">ID</span>
-                            <span className="font-mono text-slate-500">001</span>
-                        </div>
-                        <div className="flex flex-col">
-                            <span className="text-slate-400 text-xs uppercase tracking-wider font-semibold">Injured Leg</span>
-                            <span className="font-medium text-brand-primary">Right</span>
                         </div>
                     </div>
                 </div>
@@ -261,15 +271,18 @@ const PatientDashboard = () => {
                 </div>
             )}
 
-            <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
-                    Live knee angle (roll-based): {kneeAngle.toFixed(2)}°
+                    Live knee angle: {kneeAngle.toFixed(2)}°
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
-                    Quad EMG: {emgQuadPercent.toFixed(1)}%
+                    Envelope: {envelopeValue.toFixed(1)}
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
-                    Hamstring EMG: {emgHamPercent.toFixed(1)}%
+                    Activation: {activationValue.toFixed(0)}
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-4 text-slate-800 font-mono">
+                    Percent: {percentValue.toFixed(1)}
                 </div>
             </div>
 
@@ -290,8 +303,9 @@ const PatientDashboard = () => {
                                 label=""
                                 data={emgData}
                                 isConnected={deviceConnected}
-                                quadCurrentValue={emgQuadPercent}
-                                hamCurrentValue={emgHamPercent}
+                                envelopeCurrentValue={envelopeValue}
+                                activationCurrentValue={activationValue}
+                                percentCurrentValue={percentValue}
                             />
                         </div>
                     </div>

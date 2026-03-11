@@ -8,9 +8,9 @@ const char* rawCharacteristicUuid = "19b10011-e8f2-537e-4f6c-d104768a1214";
 struct CentralRawPacket {
   uint32_t deviceTimestampMs;
   uint32_t seq;
-  float roll;
-  float emgQuadPercent;
-  float emgHamPercent;
+  float roll;              // REAL roll / knee angle
+  float emgQuadPercent;    // carries QUAD ENVELOPE
+  float emgHamPercent;     // carries HAMSTRING ENVELOPE
 };
 
 BLEService rawService(rawServiceUuid);
@@ -27,7 +27,7 @@ float gxOffset = 0.0f;
 float gyOffset = 0.0f;
 float gzOffset = 0.0f;
 
-const int GYRO_CALIBRATION_SAMPLES = 500;
+const int GYRO_CALIBRATION_SAMPLES = 600;
 const float smooth = 0.2f;
 const unsigned long UPDATE_INTERVAL_MS = 10;   // ~100 Hz
 
@@ -49,7 +49,6 @@ const int EMG2_ENVELOPE_BASELINE = 36;
 // Shared EMG settings
 const float ENVELOPE_ALPHA = 0.10f;
 const unsigned long EMG_SAMPLE_INTERVAL_MS = 5;
-const int EMG_PERCENT_FULL_SCALE = 600;   // 500 -> 100%
 
 unsigned long lastEmgSampleMs = 0;
 
@@ -60,7 +59,9 @@ float emg1Percent = 0.0f;
 float emg2Envelope = 0.0f;
 int emg2Activation = 0;
 float emg2Percent = 0.0f;
-// =========================================================
+
+int emg1RawLatest = 0;
+int emg2RawLatest = 0;
 
 float wrap180(float a) {
   while (a > 180.0f) a -= 360.0f;
@@ -113,12 +114,6 @@ void calibrateGyro() {
   Serial.println("Gyro calibration complete.");
 }
 
-float activationToPercent(int activation) {
-  if (activation < 0) activation = 0;
-  if (activation > EMG_PERCENT_FULL_SCALE) activation = EMG_PERCENT_FULL_SCALE;
-  return (activation / (float)EMG_PERCENT_FULL_SCALE) * 100.0f;
-}
-
 void updateEmgs(unsigned long now) {
   if (now - lastEmgSampleMs < EMG_SAMPLE_INTERVAL_MS) {
     return;
@@ -127,23 +122,25 @@ void updateEmgs(unsigned long now) {
 
   // ---- EMG 1: Quad on A0 ----
   int raw1 = analogRead(EMG1_PIN);
+  emg1RawLatest = raw1;
+
   int raw1Zeroed = raw1 - EMG1_ZERO_OFFSET;
   int rectified1 = abs(raw1Zeroed);
 
   emg1Envelope = (1.0f - ENVELOPE_ALPHA) * emg1Envelope + ENVELOPE_ALPHA * rectified1;
   emg1Activation = (int)emg1Envelope - EMG1_ENVELOPE_BASELINE;
   if (emg1Activation < 0) emg1Activation = 0;
-  emg1Percent = activationToPercent(emg1Activation);
 
   // ---- EMG 2: Hamstring on A3 ----
   int raw2 = analogRead(EMG2_PIN);
+  emg2RawLatest = raw2;
+
   int raw2Zeroed = raw2 - EMG2_ZERO_OFFSET;
   int rectified2 = abs(raw2Zeroed);
 
   emg2Envelope = (1.0f - ENVELOPE_ALPHA) * emg2Envelope + ENVELOPE_ALPHA * rectified2;
   emg2Activation = (int)emg2Envelope - EMG2_ENVELOPE_BASELINE;
   if (emg2Activation < 0) emg2Activation = 0;
-  emg2Percent = activationToPercent(emg2Activation);
 }
 
 void setup() {
@@ -182,7 +179,7 @@ void setup() {
   ahrs.setKi(0.0f);
   ahrs.setDeclination(-8.51f);
 
-  Serial.println("Central IMU + dual EMG ready and advertising packets.");
+  Serial.println("Central IMU + EMG ready and advertising packets.");
 }
 
 void loop() {
@@ -216,20 +213,23 @@ void loop() {
     CentralRawPacket packet;
     packet.deviceTimestampMs = now;
     packet.seq = packetSeq++;
-    packet.roll = wrap180(rollF);
-    packet.emgQuadPercent = emg1Percent;
-    packet.emgHamPercent = emg2Percent;
+
+    // FINAL PAYLOAD
+    packet.roll = rollF;                  // knee angle / roll
+    packet.emgQuadPercent = emg1Envelope; // quad envelope
+    packet.emgHamPercent = emg2Envelope;  // ham envelope
 
     rawCharacteristic.writeValue((const uint8_t*)&packet, sizeof(CentralRawPacket));
 
+    // Serial: timestamp, seq, roll, quadEnvelope, hamEnvelope
     Serial.print(packet.deviceTimestampMs);
     Serial.print(",");
     Serial.print(packet.seq);
     Serial.print(",");
     Serial.print(packet.roll, 3);
     Serial.print(",");
-    Serial.print(packet.emgQuadPercent, 1);
+    Serial.print(packet.emgQuadPercent, 3);
     Serial.print(",");
-    Serial.println(packet.emgHamPercent, 1);
+    Serial.println(packet.emgHamPercent, 3);
   }
 }

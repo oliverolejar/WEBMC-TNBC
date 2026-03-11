@@ -1,19 +1,21 @@
 import { LineChart, Line, YAxis, ResponsiveContainer } from 'recharts';
 
 interface EMGChartProps {
-    data: { time: number; quad: number; ham: number }[];
+    data: { time: number; envelope: number; activation: number; percent: number }[];
     isConnected?: boolean;
     label: string;
-    quadCurrentValue?: number;
-    hamCurrentValue?: number;
+    envelopeCurrentValue?: number;
+    activationCurrentValue?: number;
+    percentCurrentValue?: number;
 }
 
 const EMGChart = ({
     data,
     isConnected = true,
     label,
-    quadCurrentValue = 0,
-    hamCurrentValue = 0,
+    envelopeCurrentValue = 0,
+    activationCurrentValue = 0,
+    percentCurrentValue = 0,
 }: EMGChartProps) => {
     if (!isConnected) {
         return (
@@ -32,36 +34,43 @@ const EMGChart = ({
         <div className="h-full w-full bg-white rounded-2xl border border-slate-200 p-6 flex flex-col">
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold text-slate-700">
-                    {label ? `${label} - ` : ''}Muscle Activity (EMG)
+                    {label ? `${label} - ` : ''}EMG Debug
                 </h3>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap justify-end">
                     <div className="bg-violet-700 text-white px-3 py-1 rounded-lg font-mono text-sm">
-                        Quad {quadCurrentValue.toFixed(1)}%
+                        Env {envelopeCurrentValue.toFixed(1)}
                     </div>
                     <div className="bg-emerald-600 text-white px-3 py-1 rounded-lg font-mono text-sm">
-                        Ham {hamCurrentValue.toFixed(1)}%
+                        Act {activationCurrentValue.toFixed(0)}
+                    </div>
+                    <div className="bg-sky-600 text-white px-3 py-1 rounded-lg font-mono text-sm">
+                        % {percentCurrentValue.toFixed(1)}
                     </div>
                 </div>
             </div>
 
-            <div className="mb-3 flex gap-4 text-sm">
+            <div className="mb-3 flex gap-4 text-sm flex-wrap">
                 <div className="flex items-center gap-2 text-slate-700">
                     <span className="inline-block w-4 h-1 bg-violet-700 rounded" />
-                    Quad
+                    Envelope
                 </div>
                 <div className="flex items-center gap-2 text-slate-700">
                     <span className="inline-block w-4 h-1 bg-emerald-600 rounded" />
-                    Hamstring
+                    Activation
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                    <span className="inline-block w-4 h-1 bg-sky-600 rounded" />
+                    Percent
                 </div>
             </div>
 
             <div className="flex-1 w-full min-h-[150px]">
                 <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={data}>
-                        <YAxis domain={[0, 100]} hide />
+                        <YAxis domain={[0, 'auto']} hide />
                         <Line
                             type="monotone"
-                            dataKey="quad"
+                            dataKey="envelope"
                             stroke="#6d28d9"
                             strokeWidth={2}
                             dot={false}
@@ -69,8 +78,16 @@ const EMGChart = ({
                         />
                         <Line
                             type="monotone"
-                            dataKey="ham"
+                            dataKey="activation"
                             stroke="#059669"
+                            strokeWidth={2}
+                            dot={false}
+                            isAnimationActive={false}
+                        />
+                        <Line
+                            type="monotone"
+                            dataKey="percent"
+                            stroke="#0284c7"
                             strokeWidth={2}
                             dot={false}
                             isAnimationActive={false}
