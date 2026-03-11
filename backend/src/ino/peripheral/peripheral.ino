@@ -86,8 +86,13 @@ void calibrateGyro() {
 }
 
 void setup() {
+
   Serial.begin(115200);
   while (!Serial && millis() < 5000) {}
+
+  pinMode(LEDR,OUTPUT);
+  pinMode(LEDG,OUTPUT);
+  pinMode(LEDB,OUTPUT);
 
   if (!BLE.begin()) {
     Serial.println("Failed to start BLE module.");
@@ -122,6 +127,10 @@ void setup() {
 
 void loop() {
   BLE.poll();
+
+  digitalWrite(LEDR,HIGH);
+  digitalWrite(LEDG,LOW);
+  digitalWrite(LEDB,HIGH);
 
   unsigned long now = millis();
   if (now - lastUpdate < UPDATE_INTERVAL_MS) {

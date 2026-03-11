@@ -146,6 +146,11 @@ void updateEmgs(unsigned long now) {
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 5000) {}
+
+  pinMode(LEDR,OUTPUT);
+  pinMode(LEDG,OUTPUT);
+  pinMode(LEDB,OUTPUT);
+
   Serial.println("Central setup started.");
 
   pinMode(EMG1_PIN, INPUT);
@@ -184,6 +189,10 @@ void setup() {
 
 void loop() {
   BLE.poll();
+
+  digitalWrite(LEDR,LOW);
+  digitalWrite(LEDG,HIGH);
+  digitalWrite(LEDB,HIGH);
 
   unsigned long now = millis();
   updateEmgs(now);
