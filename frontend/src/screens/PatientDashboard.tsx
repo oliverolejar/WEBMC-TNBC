@@ -6,6 +6,13 @@ import EMGChart from '../components/EMGChart';
 
 import RecoveryOutlookChart from '../components/RecoveryOutlookChart';
 
+type EmgPoint = { time: number; quadEnvelope: number; hamEnvelope: number; };
+
+const MAX_EMG_POINTS = 100;
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi));
+const mapToPercent = (v: number, min: number, max: number) =>
+    max <= min ? 0 : clamp(((v - min) / (max - min)) * 100, 0, 100);
+
 const PatientDashboard = () => {
     const navigate = useNavigate();
     const [currentView, setCurrentView] = useState('live'); // 'live' | 'outlook'
@@ -19,18 +26,23 @@ const PatientDashboard = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isCalibrating, setIsCalibrating] = useState(false);
     const [hasCalibrated, setHasCalibrated] = useState(false);
-    const MAX_EMG_POINTS = 100;
-    const [quadData, setQuadData] = useState<{ time: number; value: number }[]>([]);
-    const [hamData,  setHamData]  = useState<{ time: number; value: number }[]>([]);
-    const [leftQuadData, setLeftQuadData] = useState<{ time: number; value: number }[]>([]);
-    const [leftHamData,  setLeftHamData]  = useState<{ time: number; value: number }[]>([]);
+
+    const [rightEmgData, setRightEmgData] = useState<EmgPoint[]>([]);
+    const [leftEmgData,  setLeftEmgData]  = useState<EmgPoint[]>([]);
+    const [rightQuadEnv, setRightQuadEnv] = useState(0);
+    const [rightHamEnv,  setRightHamEnv]  = useState(0);
+    const [leftQuadEnv,  setLeftQuadEnv]  = useState(0);
+    const [leftHamEnv,   setLeftHamEnv]   = useState(0);
+    const [quadMin, setQuadMin] = useState(0);
+    const [quadMax, setQuadMax] = useState(100);
+    const [hamMin,  setHamMin]  = useState(0);
+    const [hamMax,  setHamMax]  = useState(100);
 
     useEffect(() => {
         const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws/knee-angle`);
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            const t = Date.now();
 
             if (typeof data.right_knee_angle_deg === "number") {
                 setKneeAngle(data.right_knee_angle_deg);
@@ -38,17 +50,31 @@ const PatientDashboard = () => {
             if (typeof data.left_knee_angle_deg === "number") {
                 setLeftKneeAngle(data.left_knee_angle_deg);
             }
-            if (typeof data.right_emg_quad_pct === "number") {
-                setQuadData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.right_emg_quad_pct }]);
+
+            const rq = typeof data.right_emg_quad_pct === "number" ? data.right_emg_quad_pct : null;
+            const rh = typeof data.right_emg_ham_pct  === "number" ? data.right_emg_ham_pct  : null;
+            const lq = typeof data.left_emg_quad_pct  === "number" ? data.left_emg_quad_pct  : null;
+            const lh = typeof data.left_emg_ham_pct   === "number" ? data.left_emg_ham_pct   : null;
+
+            if (rq !== null) setRightQuadEnv(rq);
+            if (rh !== null) setRightHamEnv(rh);
+            if (lq !== null) setLeftQuadEnv(lq);
+            if (lh !== null) setLeftHamEnv(lh);
+
+            const t = Date.now();
+            if (rq !== null || rh !== null) {
+                setRightEmgData(prev => {
+                    const last = prev.length > 0 ? prev[prev.length - 1] : { time: t, quadEnvelope: 0, hamEnvelope: 0 };
+                    const next = [...prev, { time: t, quadEnvelope: rq ?? last.quadEnvelope, hamEnvelope: rh ?? last.hamEnvelope }];
+                    return next.length > MAX_EMG_POINTS ? next.slice(next.length - MAX_EMG_POINTS) : next;
+                });
             }
-            if (typeof data.right_emg_ham_pct === "number") {
-                setHamData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.right_emg_ham_pct }]);
-            }
-            if (typeof data.left_emg_quad_pct === "number") {
-                setLeftQuadData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.left_emg_quad_pct }]);
-            }
-            if (typeof data.left_emg_ham_pct === "number") {
-                setLeftHamData(prev => [...prev.slice(-MAX_EMG_POINTS + 1), { time: t, value: data.left_emg_ham_pct }]);
+            if (lq !== null || lh !== null) {
+                setLeftEmgData(prev => {
+                    const last = prev.length > 0 ? prev[prev.length - 1] : { time: t, quadEnvelope: 0, hamEnvelope: 0 };
+                    const next = [...prev, { time: t, quadEnvelope: lq ?? last.quadEnvelope, hamEnvelope: lh ?? last.hamEnvelope }];
+                    return next.length > MAX_EMG_POINTS ? next.slice(next.length - MAX_EMG_POINTS) : next;
+                });
             }
 
             setRightConnected(!!data.right_available);
@@ -130,11 +156,15 @@ const PatientDashboard = () => {
         };
     }, []);
 
+    const rightQuadPct = mapToPercent(rightQuadEnv, quadMin, quadMax);
+    const rightHamPct  = mapToPercent(rightHamEnv,  hamMin,  hamMax);
+    const leftQuadPct  = mapToPercent(leftQuadEnv,  quadMin, quadMax);
+    const leftHamPct   = mapToPercent(leftHamEnv,   hamMin,  hamMax);
 
     return (
         <div className="min-h-screen bg-slate-50 p-6 flex flex-col">
             {/* Header */}
-            <header className="flex flex-col mb-8 bg-white px-6 pt-4 pb-3 rounded-xl shadow-sm border border-slate-100 gap-2">
+            <header className="flex flex-col mb-4 bg-white px-6 pt-4 pb-3 rounded-xl shadow-sm border border-slate-100 gap-2">
                 {/* Row 1: Nav + Actions (left) | Status Pills (right) */}
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 flex-1">
@@ -232,6 +262,21 @@ const PatientDashboard = () => {
                 </div>
             </header>
 
+            {/* Metrics Bar */}
+            <div className="grid grid-cols-5 gap-4 mb-4">
+                {[
+                    { label: 'Knee angle', value: `${kneeAngle.toFixed(2)}°` },
+                    { label: 'Quad Env',   value: rightQuadEnv.toFixed(1) },
+                    { label: 'Ham Env',    value: rightHamEnv.toFixed(1) },
+                    { label: 'Quad %',     value: rightQuadPct.toFixed(1) },
+                    { label: 'Ham %',      value: rightHamPct.toFixed(1) },
+                ].map(({ label, value }) => (
+                    <div key={label} className="bg-white border border-slate-200 rounded-xl p-4 font-mono text-slate-800">
+                        {label}: {value}
+                    </div>
+                ))}
+            </div>
+
             {/* Main Content */}
             <div className="flex-1 h-full min-h-0">
                 {currentView === 'live' ? (
@@ -244,26 +289,18 @@ const PatientDashboard = () => {
                                 angle={kneeAngle}
                                 isConnected={rightConnected}
                             />
-                            <div className="flex flex-col gap-4 h-full">
-                                <div className="flex-1 min-h-[180px]">
-                                    <EMGChart
-                                        label="Right Quadriceps"
-                                        data={quadData}
-                                        isConnected={rightConnected}
-                                        color="#6d28d9"
-                                        currentValue={quadData.length > 0 ? quadData[quadData.length - 1].value : 0}
-                                    />
-                                </div>
-                                <div className="flex-1 min-h-[180px]">
-                                    <EMGChart
-                                        label="Right Hamstring"
-                                        data={hamData}
-                                        isConnected={rightConnected}
-                                        color="#0891b2"
-                                        currentValue={hamData.length > 0 ? hamData[hamData.length - 1].value : 0}
-                                    />
-                                </div>
-                            </div>
+                            <EMGChart
+                                data={rightEmgData}
+                                isConnected={rightConnected}
+                                quadEnvelopeCurrentValue={rightQuadEnv}
+                                hamEnvelopeCurrentValue={rightHamEnv}
+                                quadPercentCurrentValue={rightQuadPct}
+                                hamPercentCurrentValue={rightHamPct}
+                                quadMin={quadMin} quadMax={quadMax}
+                                hamMin={hamMin}   hamMax={hamMax}
+                                onQuadMinChange={setQuadMin} onQuadMaxChange={setQuadMax}
+                                onHamMinChange={setHamMin}   onHamMaxChange={setHamMax}
+                            />
                         </div>
 
                         {/* Left Leg Row */}
@@ -274,26 +311,18 @@ const PatientDashboard = () => {
                                 angle={leftKneeAngle}
                                 isConnected={leftConnected}
                             />
-                            <div className="flex flex-col gap-4 h-full">
-                                <div className="flex-1 min-h-[180px]">
-                                    <EMGChart
-                                        label="Left Quadriceps"
-                                        data={leftQuadData}
-                                        isConnected={leftConnected}
-                                        color="#6d28d9"
-                                        currentValue={leftQuadData.length > 0 ? leftQuadData[leftQuadData.length - 1].value : 0}
-                                    />
-                                </div>
-                                <div className="flex-1 min-h-[180px]">
-                                    <EMGChart
-                                        label="Left Hamstring"
-                                        data={leftHamData}
-                                        isConnected={leftConnected}
-                                        color="#0891b2"
-                                        currentValue={leftHamData.length > 0 ? leftHamData[leftHamData.length - 1].value : 0}
-                                    />
-                                </div>
-                            </div>
+                            <EMGChart
+                                data={leftEmgData}
+                                isConnected={leftConnected}
+                                quadEnvelopeCurrentValue={leftQuadEnv}
+                                hamEnvelopeCurrentValue={leftHamEnv}
+                                quadPercentCurrentValue={leftQuadPct}
+                                hamPercentCurrentValue={leftHamPct}
+                                quadMin={quadMin} quadMax={quadMax}
+                                hamMin={hamMin}   hamMax={hamMax}
+                                onQuadMinChange={setQuadMin} onQuadMaxChange={setQuadMax}
+                                onHamMinChange={setHamMin}   onHamMaxChange={setHamMax}
+                            />
                         </div>
                     </div>
                 ) : (

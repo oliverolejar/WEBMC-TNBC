@@ -17,10 +17,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Compile-time role config ─────────────────────────────────────────────────
-#define ROLE_ID    2
-#define ROLE_NAME  "right_lower"
+#define ROLE_ID    1
+#define ROLE_NAME  "right_upper"
 
-// #define EMG_ENABLED   // comment out if EMG sensors not attached
+#define EMG_ENABLED   // comment out if EMG sensors not attached
 
 // Uncomment for per-packet serial logs (off by default to reduce serial noise)
 // #define DEBUG_VERBOSE
@@ -64,8 +64,8 @@ struct __attribute__((packed)) RawPacket {
   uint32_t deviceTimestampMs;
   uint32_t seq;
   float    roll;            // smoothed + wrap180'd
-  float    emgQuadPercent;  // 0.0 for lower roles
-  float    emgHamPercent;   // 0.0 for lower roles
+  float    emgQuadPercent;  // raw envelope activation (0.0 for lower roles)
+  float    emgHamPercent;   // raw envelope activation (0.0 for lower roles)
 };
 
 BLEService        rawService(rawServiceUuid);
@@ -103,7 +103,6 @@ const int          EMG_HAM_PIN           = A3;
 const int          EMG_ZERO_OFFSET       = 832;
 const int          EMG_ENVELOPE_BASELINE = 36;
 const float        EMG_ALPHA             = 0.10f;
-const int          EMG_FULL_SCALE        = 600;
 const unsigned long EMG_INTERVAL_MS      = 5;   // 200 Hz
 
 float         emgQuadEnv = 0.0f, emgHamEnv = 0.0f;
@@ -118,13 +117,13 @@ void updateEmg(unsigned long now) {
   emgQuadEnv = (1.0f - EMG_ALPHA) * emgQuadEnv + EMG_ALPHA * r1;
   int a1 = (int)emgQuadEnv - EMG_ENVELOPE_BASELINE;
   if (a1 < 0) a1 = 0;
-  emgQuadPct = constrain(a1 / (float)EMG_FULL_SCALE * 100.0f, 0.0f, 100.0f);
+  emgQuadPct = (float)a1;
 
   int r2 = abs(analogRead(EMG_HAM_PIN) - EMG_ZERO_OFFSET);
   emgHamEnv  = (1.0f - EMG_ALPHA) * emgHamEnv  + EMG_ALPHA * r2;
   int a2 = (int)emgHamEnv - EMG_ENVELOPE_BASELINE;
   if (a2 < 0) a2 = 0;
-  emgHamPct  = constrain(a2 / (float)EMG_FULL_SCALE * 100.0f, 0.0f, 100.0f);
+  emgHamPct  = (float)a2;
 }
 #endif
 
