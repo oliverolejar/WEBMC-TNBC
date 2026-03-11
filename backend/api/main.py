@@ -196,6 +196,11 @@ def stop_session():
     return {"saved_to": str(output_path), "rows": len(rows)}
 
 
+@app.post("/calibration/start")
+def calibrate_all():
+    return {"tared_roles": imu_service.tare_all()}
+
+
 @app.on_event("startup")
 async def on_startup():
     global ble_tasks

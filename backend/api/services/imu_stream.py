@@ -59,6 +59,7 @@ class ImuStreamService:
             r: deque(maxlen=self.buffer_size) for r in ALL_ROLES
         }
         self.connected_by_role: dict[str, bool] = {r: False for r in ALL_ROLES}
+        self.roll_offset_by_role: dict[str, float] = {r: 0.0 for r in ALL_ROLES}
 
         self.recording: bool = False
         self.session_rows: list[KneeSample] = []
@@ -92,6 +93,7 @@ class ImuStreamService:
         if not connected:
             self.pending_by_role[role].clear()
             self.latest_raw_by_role[role] = None
+            self.roll_offset_by_role[role] = 0.0
             # Clear the knee sample for whichever leg owns this role
             for leg, (upper, lower) in LEG_ROLES.items():
                 if role in (upper, lower):
@@ -120,7 +122,7 @@ class ImuStreamService:
             host_timestamp_ms=int(host_timestamp_ms),
             device_timestamp_ms=int(device_timestamp_ms),
             seq=int(seq),
-            roll_deg=float(roll_deg),
+            roll_deg=float(roll_deg) - self.roll_offset_by_role[role],
             emg_quad_pct=float(emg_quad_pct),
             emg_ham_pct=float(emg_ham_pct),
         )
@@ -202,6 +204,16 @@ class ImuStreamService:
             queue = self.pending_by_role[role]
             while queue and queue[0].host_timestamp_ms < cutoff_ms:
                 queue.popleft()
+
+    def tare_all(self) -> dict[str, float]:
+        """Snapshot current roll for each connected role as the new zero reference."""
+        applied: dict[str, float] = {}
+        for role in ALL_ROLES:
+            sample = self.latest_raw_by_role[role]
+            if sample is not None:
+                self.roll_offset_by_role[role] += sample.roll_deg
+                applied[role] = self.roll_offset_by_role[role]
+        return applied
 
     def start_recording(self) -> None:
         self.session_rows = []
