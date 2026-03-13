@@ -37,18 +37,27 @@ CENTRAL_PACKET_SIZE = struct.calcsize(CENTRAL_PACKET_FORMAT)
 PERIPHERAL_PACKET_FORMAT = "<IIf"
 PERIPHERAL_PACKET_SIZE = struct.calcsize(PERIPHERAL_PACKET_FORMAT)
 
-CENTRAL_ROLE = "central"
-PERIPHERAL_ROLE = "peripheral"
+CENTRAL_RIGHT = "central_right"
+PERIPHERAL_RIGHT = "peripheral_right"
+CENTRAL_LEFT = "central_left"
+PERIPHERAL_LEFT = "peripheral_left"
+
+# Backwards-compat aliases
+CENTRAL_ROLE = CENTRAL_RIGHT
+PERIPHERAL_ROLE = PERIPHERAL_RIGHT
+
 ROLE_TO_DEVICE_NAME = {
-    CENTRAL_ROLE: "Nano 33 BLE (CentralIMU)",
-    PERIPHERAL_ROLE: "Nano 33 BLE (PeripheralIMU)",
+    CENTRAL_RIGHT:    "Nano 33 BLE (CentralIMU_R)",
+    PERIPHERAL_RIGHT: "Nano 33 BLE (PeripheralIMU_R)",
+    CENTRAL_LEFT:     "Nano 33 BLE (CentralIMU_L)",
+    PERIPHERAL_LEFT:  "Nano 33 BLE (PeripheralIMU_L)",
 }
 
 ble_tasks: list[asyncio.Task] = []
 
 
 def _parse_raw_packet(role: str, data: bytes):
-    if role == CENTRAL_ROLE:
+    if role.startswith("central"):
         if len(data) < CENTRAL_PACKET_SIZE:
             return None
         return struct.unpack(CENTRAL_PACKET_FORMAT, data[:CENTRAL_PACKET_SIZE])
@@ -122,8 +131,9 @@ def health():
     return {
         "status": "ok",
         "device_connected": imu_service.device_connected,
-        "central_connected": imu_service.central_connected,
-        "peripheral_connected": imu_service.peripheral_connected,
+        "central_connected": imu_service.central_right_connected,
+        "peripheral_connected": imu_service.peripheral_right_connected,
+        "left_connected": imu_service.left_connected,
         "recording": imu_service.recording,
         "calibration_active": imu_service.calibration_active,
     }
@@ -174,6 +184,9 @@ def stop_session():
                 "emg_quad_envelope",
                 "emg_ham_envelope",
                 "pair_dt_ms",
+                "left_knee_angle_deg",
+                "left_emg_quad_envelope",
+                "left_emg_ham_envelope",
             ]
         )
         for sample in rows:
@@ -186,6 +199,9 @@ def stop_session():
                     sample.emg_quad_envelope,
                     sample.emg_ham_envelope,
                     sample.pair_dt_ms,
+                    sample.left_knee_angle_deg,
+                    sample.left_emg_quad_envelope,
+                    sample.left_emg_ham_envelope,
                 ]
             )
 
@@ -196,8 +212,8 @@ def stop_session():
 async def on_startup():
     global ble_tasks
     ble_tasks = [
-        asyncio.create_task(ble_role_loop(CENTRAL_ROLE, ROLE_TO_DEVICE_NAME[CENTRAL_ROLE])),
-        asyncio.create_task(ble_role_loop(PERIPHERAL_ROLE, ROLE_TO_DEVICE_NAME[PERIPHERAL_ROLE])),
+        asyncio.create_task(ble_role_loop(role, name))
+        for role, name in ROLE_TO_DEVICE_NAME.items()
     ]
 
 

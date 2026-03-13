@@ -27,17 +27,27 @@ const PatientDashboard = () => {
     const navigate = useNavigate();
     const [currentView, setCurrentView] = useState('live');
 
+    // Right leg
     const [kneeAngle, setKneeAngle] = useState(0);
     const [deviceConnected, setDeviceConnected] = useState(false);
-
     const [emgData, setEmgData] = useState<EmgPoint[]>([]);
     const [quadEnvelopeValue, setQuadEnvelopeValue] = useState(0);
     const [hamEnvelopeValue, setHamEnvelopeValue] = useState(0);
-
     const [quadMin, setQuadMin] = useState(36);
     const [quadMax, setQuadMax] = useState(250);
     const [hamMin, setHamMin] = useState(36);
     const [hamMax, setHamMax] = useState(250);
+
+    // Left leg (optional — populated when left Arduinos connect)
+    const [leftKneeAngle, setLeftKneeAngle] = useState(0);
+    const [leftConnected, setLeftConnected] = useState(false);
+    const [leftEmgData, setLeftEmgData] = useState<EmgPoint[]>([]);
+    const [leftQuadEnvelopeValue, setLeftQuadEnvelopeValue] = useState(0);
+    const [leftHamEnvelopeValue, setLeftHamEnvelopeValue] = useState(0);
+    const [leftQuadMin, setLeftQuadMin] = useState(36);
+    const [leftQuadMax, setLeftQuadMax] = useState(250);
+    const [leftHamMin, setLeftHamMin] = useState(36);
+    const [leftHamMax, setLeftHamMax] = useState(250);
 
     const [calibrationActive, setCalibrationActive] = useState(false);
     const [calibrationMessage, setCalibrationMessage] = useState('');
@@ -104,6 +114,47 @@ const PatientDashboard = () => {
             if (typeof data.calibration_active === 'boolean') {
                 setCalibrationActive(data.calibration_active);
             }
+
+            // Left leg
+            if (typeof data.left_connected === 'boolean') {
+                setLeftConnected(data.left_connected);
+            }
+
+            if (typeof data.left_knee_angle_deg === 'number') {
+                setLeftKneeAngle(data.left_knee_angle_deg);
+            }
+
+            const leftQuad =
+                typeof data.left_emg_quad_envelope === 'number'
+                    ? data.left_emg_quad_envelope
+                    : null;
+            const leftHam =
+                typeof data.left_emg_ham_envelope === 'number'
+                    ? data.left_emg_ham_envelope
+                    : null;
+
+            if (leftQuad !== null) setLeftQuadEnvelopeValue(leftQuad);
+            if (leftHam !== null) setLeftHamEnvelopeValue(leftHam);
+
+            if (leftQuad !== null || leftHam !== null) {
+                setLeftEmgData((prev) => {
+                    const last =
+                        prev.length > 0
+                            ? prev[prev.length - 1]
+                            : { time: Date.now(), quadEnvelope: 0, hamEnvelope: 0 };
+                    const next = [
+                        ...prev,
+                        {
+                            time: Date.now(),
+                            quadEnvelope: leftQuad ?? last.quadEnvelope,
+                            hamEnvelope: leftHam ?? last.hamEnvelope,
+                        },
+                    ];
+                    return next.length > MAX_EMG_POINTS
+                        ? next.slice(next.length - MAX_EMG_POINTS)
+                        : next;
+                });
+            }
         };
 
         ws.onerror = (err) => {
@@ -129,12 +180,14 @@ const PatientDashboard = () => {
                     device_connected?: boolean;
                     calibration_active?: boolean;
                     recording?: boolean;
+                    left_connected?: boolean;
                 } = await response.json();
 
                 if (isMounted) {
                     setDeviceConnected(!!data.device_connected);
                     setCalibrationActive(!!data.calibration_active);
                     setIsRecording(!!data.recording);
+                    setLeftConnected(!!data.left_connected);
                 }
             } catch (err) {
                 console.error('Health check error:', err);
@@ -288,6 +341,18 @@ const PatientDashboard = () => {
                                 Not Recording
                             </div>
                         )}
+
+                        {leftConnected ? (
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-medium border border-emerald-100">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                Left Connected
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-sm font-medium border border-slate-200">
+                                <span className="w-2 h-2 rounded-full bg-slate-400" />
+                                Left Disconnected
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -325,37 +390,75 @@ const PatientDashboard = () => {
                 </div>
             </div>
 
-            <div className="flex-1 h-full min-h-0">
+            <div className="flex-1 h-full min-h-0 flex flex-col gap-6">
                 {currentView === 'live' ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-                        <div className="h-full min-h-[400px]">
-                            <KneeAngleViz
-                                side="Right"
-                                label=""
-                                angle={kneeAngle}
-                                isConnected={deviceConnected}
-                            />
+                    <>
+                        {/* Right leg */}
+                        <div>
+                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2 px-1">Right Leg</p>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div className="min-h-[400px]">
+                                    <KneeAngleViz
+                                        side="Right"
+                                        label=""
+                                        angle={kneeAngle}
+                                        isConnected={deviceConnected}
+                                    />
+                                </div>
+                                <div className="min-h-[400px]">
+                                    <EMGChart
+                                        data={emgData}
+                                        isConnected={deviceConnected}
+                                        quadEnvelopeCurrentValue={quadEnvelopeValue}
+                                        hamEnvelopeCurrentValue={hamEnvelopeValue}
+                                        quadPercentCurrentValue={quadPercentValue}
+                                        hamPercentCurrentValue={hamPercentValue}
+                                        quadMin={quadMin}
+                                        quadMax={quadMax}
+                                        hamMin={hamMin}
+                                        hamMax={hamMax}
+                                        onQuadMinChange={setQuadMin}
+                                        onQuadMaxChange={setQuadMax}
+                                        onHamMinChange={setHamMin}
+                                        onHamMaxChange={setHamMax}
+                                    />
+                                </div>
+                            </div>
                         </div>
 
-                        <div className="h-full min-h-[400px]">
-                            <EMGChart
-                                data={emgData}
-                                isConnected={deviceConnected}
-                                quadEnvelopeCurrentValue={quadEnvelopeValue}
-                                hamEnvelopeCurrentValue={hamEnvelopeValue}
-                                quadPercentCurrentValue={quadPercentValue}
-                                hamPercentCurrentValue={hamPercentValue}
-                                quadMin={quadMin}
-                                quadMax={quadMax}
-                                hamMin={hamMin}
-                                hamMax={hamMax}
-                                onQuadMinChange={setQuadMin}
-                                onQuadMaxChange={setQuadMax}
-                                onHamMinChange={setHamMin}
-                                onHamMaxChange={setHamMax}
-                            />
+                        {/* Left leg */}
+                        <div>
+                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2 px-1">Left Leg</p>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div className="min-h-[400px]">
+                                    <KneeAngleViz
+                                        side="Left"
+                                        label=""
+                                        angle={leftKneeAngle}
+                                        isConnected={leftConnected}
+                                    />
+                                </div>
+                                <div className="min-h-[400px]">
+                                    <EMGChart
+                                        data={leftEmgData}
+                                        isConnected={leftConnected}
+                                        quadEnvelopeCurrentValue={leftQuadEnvelopeValue}
+                                        hamEnvelopeCurrentValue={leftHamEnvelopeValue}
+                                        quadPercentCurrentValue={mapToPercent(leftQuadEnvelopeValue, leftQuadMin, leftQuadMax)}
+                                        hamPercentCurrentValue={mapToPercent(leftHamEnvelopeValue, leftHamMin, leftHamMax)}
+                                        quadMin={leftQuadMin}
+                                        quadMax={leftQuadMax}
+                                        hamMin={leftHamMin}
+                                        hamMax={leftHamMax}
+                                        onQuadMinChange={setLeftQuadMin}
+                                        onQuadMaxChange={setLeftQuadMax}
+                                        onHamMinChange={setLeftHamMin}
+                                        onHamMaxChange={setLeftHamMax}
+                                    />
+                                </div>
+                            </div>
                         </div>
-                    </div>
+                    </>
                 ) : (
                     <div className="h-[600px] w-full">
                         <RecoveryOutlookChart />

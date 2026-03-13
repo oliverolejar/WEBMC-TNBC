@@ -2,6 +2,9 @@
 #include <Arduino_BMI270_BMM150.h>
 #include <ReefwingAHRS.h>
 
+// Set to "R" for right leg, "L" for left leg before flashing
+#define LEG_SIDE "R"
+
 const char* rawServiceUuid = "19b10010-e8f2-537e-4f6c-d104768a1214";
 const char* rawCharacteristicUuid = "19b10011-e8f2-537e-4f6c-d104768a1214";
 
@@ -99,7 +102,7 @@ void setup() {
     while (1) {}
   }
 
-  BLE.setLocalName("Nano 33 BLE (PeripheralIMU)");
+  BLE.setLocalName("Nano 33 BLE (PeripheralIMU_" LEG_SIDE ")");
   BLE.setAdvertisedService(rawService);
   rawService.addCharacteristic(rawCharacteristic);
   BLE.addService(rawService);
