@@ -36,23 +36,23 @@ const Home = () => {
                 <div className="absolute inset-0 bg-gradient-to-br from-brand-deep via-brand-deep to-indigo-950" />
                 <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brand-primary/20 rounded-full blur-[100px] pointer-events-none" />
 
-                <div className="relative z-10 space-y-12 animate-fade-in-up [animation-delay:200ms]">
+                <div className="relative z-10 space-y-12 animate-fade-in-up [animation-delay:200ms] text-center">
                     <div className="space-y-4">
                         <p className="text-brand-light font-mono text-sm tracking-widest uppercase mb-2">Featured Project</p>
-                        <div className="inline-block relative">
-                            <h3 className="text-4xl lg:text-5xl font-bold leading-tight">
-                                Smart ACL <br /> Rehab Sleeve
+                        <div className="block relative">
+                            <h3 className="text-3xl lg:text-4xl font-bold leading-tight">
+                                MustangMotion:<br/>Smart ACL Rehab Sleeve
                             </h3>
-                            <div className="absolute -bottom-4 left-0 w-24 h-1.5 bg-gradient-to-r from-brand-primary via-brand-light to-brand-primary rounded-full shadow-[0_0_10px_rgba(124,58,237,0.5)]" />
+                            <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-24 h-1.5 bg-gradient-to-r from-brand-primary via-brand-light to-brand-primary rounded-full shadow-[0_0_10px_rgba(124,58,237,0.5)]" />
                         </div>
-                        <p className="text-indigo-100/70 text-lg leading-relaxed pt-6 max-w-md">
+                        <p className="text-indigo-100/70 text-lg leading-relaxed pt-6 max-w-md mx-auto">
                             Biomechanical real-time and feedback for post-injury recovery optimization.
                         </p>
                     </div>
 
                     <button
                         onClick={() => navigate('/select-patient')}
-                        className="group relative inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-brand-primary to-brand-light text-white rounded-full font-bold text-lg hover:brightness-110 transition-all duration-300 hover:scale-[1.02] shadow-xl shadow-brand-primary/20 active:scale-[0.98] w-fit cursor-pointer"
+                        className="group relative inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-brand-primary to-brand-light text-white rounded-full font-bold text-lg hover:brightness-110 transition-all duration-300 hover:scale-[1.02] shadow-xl shadow-brand-primary/20 active:scale-[0.98] w-fit mx-auto cursor-pointer"
                     >
                         <span>Select Patient</span>
                         <div className="relative w-5 h-5">
