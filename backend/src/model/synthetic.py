@@ -7,7 +7,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import COL_DEVICE_TS_MS, COL_KNEE_ANGLE, COL_TIMESTAMP, SESSIONS_DIR
+from .config import (
+    COL_DEVICE_TS_MS,
+    COL_EMG_HAM,
+    COL_EMG_QUAD,
+    COL_KNEE_ANGLE,
+    COL_LEFT_EMG_HAM,
+    COL_LEFT_EMG_QUAD,
+    COL_LEFT_KNEE_ANGLE,
+    COL_TIMESTAMP,
+    SESSIONS_DIR,
+)
 
 
 @dataclass
@@ -92,6 +102,9 @@ def generate_synthetic_sessions(
 
     for src_csv in healthy_files:
         base_df = _load_base_session(src_csv)
+        if len(base_df) < 10:
+            print(f"[skip] {src_csv.name}: too few rows ({len(base_df)})")
+            continue
         base_name = src_csv.stem
         healthy_angle = pd.to_numeric(base_df[COL_KNEE_ANGLE], errors="coerce").ffill().bfill().to_numpy()
         base_device_ms = pd.to_numeric(base_df[COL_DEVICE_TS_MS], errors="coerce").ffill().bfill().to_numpy()
@@ -100,10 +113,44 @@ def generate_synthetic_sessions(
         base_device_ms = base_device_ms - base_device_ms[0]
         t0 = pd.Timestamp.utcnow()
 
+        # Write the original healthy session as the full-recovery reference (week = weeks).
+        # This anchors the model: healthy ROM is the target inlier, not an outlier.
+        for _ref in range(variants_per_session):
+            ref_id = f"synth_{base_name}_v{_ref + 1:02d}_w{weeks:02d}"
+            ref_df = pd.DataFrame(
+                {
+                    COL_TIMESTAMP: (t0 + pd.to_timedelta(weeks * 7, unit="D") + pd.to_timedelta(base_device_ms, unit="ms")).astype(str),
+                    COL_DEVICE_TS_MS: base_device_ms.astype(np.int64),
+                    COL_KNEE_ANGLE: healthy_angle.astype(np.float32),
+                    COL_EMG_QUAD: np.clip(36.0 + 0.9 * 180.0 + rng.normal(0, 3.0, len(healthy_angle)), 0, 255).astype(np.float32),
+                    COL_EMG_HAM: np.clip(36.0 + 0.9 * 150.0 + rng.normal(0, 3.0, len(healthy_angle)), 0, 255).astype(np.float32),
+                    COL_LEFT_KNEE_ANGLE: healthy_angle.astype(np.float32),
+                    COL_LEFT_EMG_QUAD: np.clip(36.0 + 0.9 * 180.0 + rng.normal(0, 3.0, len(healthy_angle)), 0, 255).astype(np.float32),
+                    COL_LEFT_EMG_HAM: np.clip(36.0 + 0.9 * 150.0 + rng.normal(0, 3.0, len(healthy_angle)), 0, 255).astype(np.float32),
+                }
+            )
+            ref_df.to_csv(output_dir / f"{ref_id}.csv", index=False)
+            manifest_rows.append({"session_id": ref_id, "source_session": base_name, "variant_id": 0, "week_index": weeks, "start_scale": 1.0, "end_scale": 1.0, "angle_bias_deg": 0.0, "noise_std_deg": 0.0})
+
         for v in range(1, variants_per_session + 1):
             profile = _make_profile(rng, variant_id=v)
             for w in range(weeks):
+                frac = _progress_fraction(w, weeks)
                 synth_angle = _synthesize_angles(healthy_angle, profile, w, weeks, rng)
+
+                # Right-leg EMG: low (injured) early, recovering toward healthy
+                scale = profile.start_scale + (profile.end_scale - profile.start_scale) * frac
+                emg_quad = 36.0 + (1.0 - scale) * frac * 180.0 + rng.normal(0, 5.0, len(healthy_angle))
+                emg_ham = 36.0 + (1.0 - scale) * frac * 150.0 + rng.normal(0, 4.0, len(healthy_angle))
+                emg_quad = np.clip(emg_quad, 0, 255).astype(np.float32)
+                emg_ham = np.clip(emg_ham, 0, 255).astype(np.float32)
+
+                # Left-leg: healthy throughout (tiny jitter only)
+                left_angle = healthy_angle + rng.normal(0, 0.3, len(healthy_angle))
+                left_emg_quad = 36.0 + 0.9 * 180.0 + rng.normal(0, 3.0, len(healthy_angle))
+                left_emg_ham = 36.0 + 0.9 * 150.0 + rng.normal(0, 3.0, len(healthy_angle))
+                left_emg_quad = np.clip(left_emg_quad, 0, 255).astype(np.float32)
+                left_emg_ham = np.clip(left_emg_ham, 0, 255).astype(np.float32)
 
                 session_id = f"synth_{base_name}_v{v:02d}_w{w:02d}"
                 session_df = pd.DataFrame(
@@ -113,6 +160,11 @@ def generate_synthetic_sessions(
                         ).astype(str),
                         COL_DEVICE_TS_MS: base_device_ms.astype(np.int64),
                         COL_KNEE_ANGLE: synth_angle.astype(np.float32),
+                        COL_EMG_QUAD: emg_quad,
+                        COL_EMG_HAM: emg_ham,
+                        COL_LEFT_KNEE_ANGLE: left_angle.astype(np.float32),
+                        COL_LEFT_EMG_QUAD: left_emg_quad,
+                        COL_LEFT_EMG_HAM: left_emg_ham,
                     }
                 )
 

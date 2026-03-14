@@ -8,7 +8,12 @@ import pandas as pd
 
 from .config import (
     COL_DEVICE_TS_MS,
+    COL_EMG_HAM,
+    COL_EMG_QUAD,
     COL_KNEE_ANGLE,
+    COL_LEFT_EMG_HAM,
+    COL_LEFT_EMG_QUAD,
+    COL_LEFT_KNEE_ANGLE,
     COL_TIMESTAMP,
     EPSILON,
     SESSIONS_DIR,
@@ -63,6 +68,46 @@ def extract_session_features(df: pd.DataFrame, session_id: str) -> dict:
     vel = angle.diff() / t.diff().replace(0, np.nan)
     vel = vel.replace([np.inf, -np.inf], np.nan).dropna()
 
+    # --- Right-leg EMG ---
+    def _emg_stats(col: str) -> tuple[float, float, float]:
+        if col in df.columns:
+            s = pd.to_numeric(df[col], errors="coerce").dropna()
+            if not s.empty:
+                return float(s.mean()), float(s.std(ddof=0)), float(s.max())
+        return 0.0, 0.0, 0.0
+
+    eq_mean, eq_std, eq_max = _emg_stats(COL_EMG_QUAD)
+    eh_mean, eh_std, eh_max = _emg_stats(COL_EMG_HAM)
+
+    # --- Left-leg knee (phantom = copy right if absent) ---
+    if COL_LEFT_KNEE_ANGLE in df.columns:
+        la = pd.to_numeric(df[COL_LEFT_KNEE_ANGLE], errors="coerce").dropna()
+    else:
+        la = angle  # phantom: symmetric
+
+    lk_mean = float(la.mean())
+    lk_std = float(la.std(ddof=0))
+    lk_rom = float(la.max() - la.min())
+    lk_p05 = float(la.quantile(0.05))
+    lk_p95 = float(la.quantile(0.95))
+
+    # --- Left-leg EMG (phantom = copy right if absent) ---
+    if COL_LEFT_EMG_QUAD in df.columns:
+        leq_mean, leq_std, leq_max = _emg_stats(COL_LEFT_EMG_QUAD)
+    else:
+        leq_mean, leq_std, leq_max = eq_mean, eq_std, eq_max
+
+    if COL_LEFT_EMG_HAM in df.columns:
+        leh_mean, leh_std, leh_max = _emg_stats(COL_LEFT_EMG_HAM)
+    else:
+        leh_mean, leh_std, leh_max = eh_mean, eh_std, eh_max
+
+    # --- Asymmetry (0 when phantom used = fully symmetric = recovered) ---
+    knee_rom_asymmetry = rom_deg - lk_rom
+    knee_mean_asymmetry = float(angle.mean()) - lk_mean
+    emg_quad_asymmetry = eq_mean - leq_mean
+    emg_ham_asymmetry = eh_mean - leh_mean
+
     return {
         "session_id": session_id,
         "sample_count": sample_count,
@@ -81,6 +126,31 @@ def extract_session_features(df: pd.DataFrame, session_id: str) -> dict:
         "vel_std_deg_s": float(vel.std(ddof=0)) if len(vel) > 1 else 0.0,
         "vel_abs_mean_deg_s": float(vel.abs().mean()) if not vel.empty else 0.0,
         "vel_abs_max_deg_s": float(vel.abs().max()) if not vel.empty else 0.0,
+        # Right-leg EMG (6)
+        "emg_quad_mean": eq_mean,
+        "emg_quad_std": eq_std,
+        "emg_quad_max": eq_max,
+        "emg_ham_mean": eh_mean,
+        "emg_ham_std": eh_std,
+        "emg_ham_max": eh_max,
+        # Left-leg knee (5)
+        "left_knee_mean": lk_mean,
+        "left_knee_std": lk_std,
+        "left_knee_rom": lk_rom,
+        "left_knee_p05": lk_p05,
+        "left_knee_p95": lk_p95,
+        # Left-leg EMG (6)
+        "left_emg_quad_mean": leq_mean,
+        "left_emg_quad_std": leq_std,
+        "left_emg_quad_max": leq_max,
+        "left_emg_ham_mean": leh_mean,
+        "left_emg_ham_std": leh_std,
+        "left_emg_ham_max": leh_max,
+        # Asymmetry (4)
+        "knee_rom_asymmetry": knee_rom_asymmetry,
+        "knee_mean_asymmetry": knee_mean_asymmetry,
+        "emg_quad_asymmetry": emg_quad_asymmetry,
+        "emg_ham_asymmetry": emg_ham_asymmetry,
     }
 
 

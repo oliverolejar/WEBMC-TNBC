@@ -10,6 +10,15 @@ COL_TIMESTAMP = "timestamp"
 COL_DEVICE_TS_MS = "device_timestamp_ms"
 COL_KNEE_ANGLE = "knee_angle_deg"
 
+# EMG columns (right leg)
+COL_EMG_QUAD = "emg_quad_envelope"
+COL_EMG_HAM = "emg_ham_envelope"
+
+# Left-leg columns
+COL_LEFT_KNEE_ANGLE = "left_knee_angle_deg"
+COL_LEFT_EMG_QUAD = "left_emg_quad_envelope"
+COL_LEFT_EMG_HAM = "left_emg_ham_envelope"
+
 # Feature extraction settings
 EPSILON = 1e-9
 

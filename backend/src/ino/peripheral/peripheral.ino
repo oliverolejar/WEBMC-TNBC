@@ -3,7 +3,7 @@
 #include <ReefwingAHRS.h>
 
 // Set to "R" for right leg, "L" for left leg before flashing
-#define LEG_SIDE "R"
+#define LEG_SIDE "L"
 
 const char* rawServiceUuid = "19b10010-e8f2-537e-4f6c-d104768a1214";
 const char* rawCharacteristicUuid = "19b10011-e8f2-537e-4f6c-d104768a1214";

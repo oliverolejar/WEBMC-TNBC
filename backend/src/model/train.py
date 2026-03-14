@@ -31,7 +31,19 @@ def main() -> None:
         print("[error] No valid sessions found for training.")
         return
 
-    feature_cols = [c for c in df.columns if c != "session_id"]
+    # Use only core knee-angle distribution features.
+    # Excluded reasons:
+    #   EMG          – electrodes not always attached; 0-values are hard outliers
+    #   Velocity     – synthetic per-sample noise inflates velocity vs real sessions
+    #   Asymmetry    – always 0 for 2-Arduino sessions (phantom left = right),
+    #                  but training data has non-zero asymmetry → hard outlier
+    #   Left-knee    – phantom copies of right in 2-Arduino mode; adds no signal
+    #   Timing/count – fixed from single base session; would penalise different lengths
+    _CORE_KNEE_COLS = {
+        "knee_mean_deg", "knee_std_deg", "knee_min_deg", "knee_max_deg",
+        "knee_rom_deg", "knee_p05_deg", "knee_p95_deg",
+    }
+    feature_cols = [c for c in df.columns if c in _CORE_KNEE_COLS]
     X = df[feature_cols]
 
     model = IsolationForest(
@@ -43,7 +55,7 @@ def main() -> None:
 
     # Save score scaling bounds to map decision scores -> Recovery Index (0-100)
     train_scores = model.decision_function(X)
-    score_p05 = float(np.percentile(train_scores, 5))
+    score_p05 = float(np.percentile(train_scores, 1))
     score_p95 = float(np.percentile(train_scores, 95))
 
     args.output_model.parent.mkdir(parents=True, exist_ok=True)

@@ -53,6 +53,7 @@ const PatientDashboard = () => {
     const [calibrationMessage, setCalibrationMessage] = useState('');
     const [isCalibrating, setIsCalibrating] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
+    const [recoveryRefreshKey, setRecoveryRefreshKey] = useState(0);
 
     const quadPercentValue = mapToPercent(quadEnvelopeValue, quadMin, quadMax);
     const hamPercentValue = mapToPercent(hamEnvelopeValue, hamMin, hamMax);
@@ -243,6 +244,7 @@ const PatientDashboard = () => {
             const response = await fetch(`${API_BASE}/session/stop`, { method: 'POST' });
             if (!response.ok) throw new Error('Failed to stop recording');
             setIsRecording(false);
+            setRecoveryRefreshKey(k => k + 1);
         } catch (err) {
             console.error(err);
         }
@@ -461,7 +463,7 @@ const PatientDashboard = () => {
                     </>
                 ) : (
                     <div className="h-[600px] w-full">
-                        <RecoveryOutlookChart />
+                        <RecoveryOutlookChart refreshKey={recoveryRefreshKey} />
                     </div>
                 )}
             </div>
