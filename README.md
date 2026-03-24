@@ -1,6 +1,12 @@
 # MustangMotion
 
-A wearable knee rehabilitation monitoring system for physiotherapists. MustangMotion tracks real-time knee angle and muscle activation (EMG) for both legs simultaneously, records sessions, and uses an unsupervised machine learning model to generate a Recovery Index — giving clinicians objective data to inform return-to-sport decisions.
+A wearable knee rehabilitation monitoring system for physiotherapists. MustangMotion tracks real-time knee angle and muscle activation (EMG) for both legs simultaneously, records sessions, and uses an unsupervised machine learning model to generate a Recovery Index, giving clinicians objective data to inform return-to-sport decisions.
+
+---
+
+### Authors
+
+Oliver Olejar (Software Team Lead), Salim Kanji (VP Design Team), Noah Park (Mechanical Team Lead), Vishwa Prajapati (Electrical Team Lead), and Western Engineering Biomedical Club team members.
 
 ---
 
