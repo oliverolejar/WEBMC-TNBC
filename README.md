@@ -6,13 +6,13 @@ A wearable knee rehabilitation monitoring system for physiotherapists. MustangMo
 
 ## Demo
 
-**Single Leg**
-
-<video src="demo/IMG_0831.mp4" controls width="720"></video>
-
 **Two Leg Dashboard Demo**
 
-<video src="demo/IMG_0846.mp4" controls width="720"></video>
+https://github.com/user-attachments/assets/73faa3f3-bd73-49c5-8bf9-3dbe64d406b0
+
+**Single Leg Dashboard Demo**
+
+https://github.com/user-attachments/assets/3da98cd1-636f-4654-8a9b-f96878a38f40
 
 **GUI Up Close**
 
