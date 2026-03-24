@@ -4,7 +4,7 @@ A wearable knee rehabilitation monitoring system for physiotherapists. MustangMo
 
 ---
 
-### Authors
+## Authors
 
 Oliver Olejar (Software Team Lead), Salim Kanji (VP Design Team), Noah Park (Mechanical Team Lead), Vishwa Prajapati (Electrical Team Lead), and Western Engineering Biomedical Club team members.
 
