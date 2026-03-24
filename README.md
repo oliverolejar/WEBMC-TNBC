@@ -14,10 +14,6 @@ https://github.com/user-attachments/assets/73faa3f3-bd73-49c5-8bf9-3dbe64d406b0
 
 https://github.com/user-attachments/assets/3da98cd1-636f-4654-8a9b-f96878a38f40
 
-**GUI Up Close**
-
-<video src="demo/GUI_TNBC.mp4" controls width="720"></video>
-
 ---
 
 ## System Architecture
