@@ -1,154 +1,251 @@
-# WEBMC-TNBC
+# MustangMotion
 
-## GETTING STARTED
+A wearable knee rehabilitation monitoring system for physiotherapists. MustangMotion tracks real-time knee angle and muscle activation (EMG) for both legs simultaneously, records sessions, and uses an unsupervised machine learning model to generate a Recovery Index — giving clinicians objective data to inform return-to-sport decisions.
 
-## Python Download
+---
 
-The programming language we will be using. It is beginner friendly and has a lot of data science and machine learning libraries.  
+## Demo
 
-Download link:  
->https://www.python.org/downloads/  
+**Single Leg**
 
-## Git Download
+<video src="demo/IMG_0831.mp4" controls width="720"></video>
 
-Git is a system used for version control. Version control allows developers to work on the same code base while continually improving it and adding features. It also allows for collaboration been developers on the same code.  
+**Two Leg Dashboard Demo**
 
-Download link:  
->https://git-scm.com/downloads/win  
+<video src="demo/IMG_0846.mp4" controls width="720"></video>
 
-## Code Editor (Visual Studio Code)
+**GUI Up Close**
 
-This is a program that allows you to view and edit files, as well as run code.  
+<video src="demo/GUI_TNBC.mp4" controls width="720"></video>
 
-Download link:  
->https://code.visualstudio.com/download  
+---
 
-**After installing VS Code (add these extensions):**
-1) Open **Extensions** (left sidebar).  
-2) Search **Python Extension Pack** → **Install**.  
-3) Search **GitHub Extension Pack** → **Install**.
+## System Architecture
 
-## Arduino IDE
+```
+Arduino Nanos (×4)
+  └── BLE (Bleak)
+        └── FastAPI Backend (Python)
+              └── WebSocket
+                    └── React Frontend (TypeScript)
+```
 
-We will be using an IDE (Integrated Development Environment) specifically made for the Arduino. The Arduino is a microcontroller (basically a small single purpose computer on a chip) that has a multittude of sensors that we will be using to extract data with. For now you just need to install this program so that later we can add code to these Arduinos.
+Each leg uses two Arduino Nano 33 BLE boards:
+- **Central** (femur/thigh) — IMU + 2× EMG (quadriceps and hamstring)
+- **Peripheral** (tibia/lower leg) — IMU only
 
-Download link:
->https://www.arduino.cc/en/software/
+Knee angle is computed from the difference in roll between the two IMUs on the same leg. Both legs are streamed, displayed, and recorded simultaneously.
 
-## How to Clone Club Code Repository onto VS Code
+---
 
-1) On GitHub, click the green **Code** button → **HTTPS** → **Copy** the link.  
-2) Open **VS Code** → **Ctrl/Cmd+Shift+P** → type **Git: Clone** → **Enter**.  
-3) **Paste** the link → **Enter**.  
-4) Pick a local **folder** to save the repo.  
-5) When prompted, click **Open** to open the cloned repository in VS Code.
+## Hardware Requirements
 
+- 4× Arduino Nano 33 BLE
+- EMG sensor modules (×2 per patient, connected to pins A0 and A3 on each Central)
+- Custom PCBs and 3D printed TPU/PLA-CF cuff assembly
 
-## Navigate to your own branch
+---
 
-**What’s the terminal?** It’s a panel inside VS Code where you type commands (Git, Python, etc.).  
-**Open it:** VS Code top menu → **Terminal** → **New Terminal** (default shell is fine on both Windows and macOS).
+## Arduino Setup
 
+### Required Libraries
 
-**Steps of commands to type/copy into the terminal:**
-1) See all local branches:
->git branch
-2) Switch to your pre-made branch (replace with your name):
->git switch your-name-branch
-3) Verify you’re on it (the `*` marks the current branch):
->git branch
+Install the following libraries via the Arduino IDE Library Manager (`Sketch → Include Library → Manage Libraries`):
 
-## Virtual Environment Set Up
+| Library | Purpose |
+|---|---|
+| `ArduinoBLE` | Bluetooth Low Energy communication |
+| `Arduino_BMI270_BMM150` | IMU sensor driver |
+| `ReefwingAHRS` | IMU sensor fusion (Mahony algorithm) |
 
-1) Open **Terminal → New Terminal** in VS Code (make sure the path shows your project folder).
-2) **Create** a virtual environment (one-time, keep the default name `venv`):
+### Flashing the Boards
 
-Windows (either works depending on your setup)
+There are two sketches — one for each role. Both are located in `backend/src/ino/`.
 
->python -m venv venv
+**Before flashing each board**, open the sketch and set the `LEG_SIDE` define at the top to match the leg it will be worn on:
 
-or
+```cpp
+// Set to "R" for right leg, "L" for left leg before flashing
+#define LEG_SIDE "R"
+```
 
->py -3 -m venv venv
+| Sketch | Board placement | File |
+|---|---|---|
+| `central.ino` | Femur (thigh) | `backend/src/ino/central/central.ino` |
+| `peripheral.ino` | Tibia (lower leg) | `backend/src/ino/peripheral/peripheral.ino` |
 
-macOS/Linux
+Flash all four boards (2 central, 2 peripheral) with the correct `LEG_SIDE` before running the system. The backend discovers boards by their BLE advertised names, which are set automatically based on `LEG_SIDE` and the sketch role.
 
->python3 -m venv venv
+---
 
-3) **Activate** the virtual environment (do this every time you open a new terminal):
+## Software Setup
 
-Windows PowerShell
+### Prerequisites
 
->.\venv\Scripts\Activate.ps1
+- Python 3.10+
+- Node.js 18+
 
-Windows CMD
+### 1. Clone the repository
 
->venv\Scripts\activate.bat
+```bash
+git clone <repo-url>
+cd WEBMC-TNBC
+```
 
-macOS/Linux
+### 2. Backend
 
->source venv/bin/activate
+Create and activate a virtual environment, then install dependencies:
 
-4) **Confirm** it worked: your terminal prompt should start with `(venv)`.  
-   Optional check:
->python --version
->pip --version
+```bash
+# Windows
+python -m venv venv
+venv\Scripts\activate
 
-## Installing Necessary Libraries
+# macOS/Linux
+python3 -m venv venv
+source venv/bin/activate
+```
 
-1) Make sure your virtual environment is **active** (your terminal prompt starts with `(venv)`).
-2) **What are libraries?**  
-   They’re pre-built tools/packages (e.g., NumPy, Pandas) that our code depends on. We list them (with versions) in `requirements.txt` so everyone installs the same set.
-3) **Install everything from `requirements.txt`:**
->pip install -r requirements.txt
-4) **Quick check (optional):**
->python -c "import numpy, pandas; print('OK')"  
+```bash
+pip install -r requirements.txt
+```
 
-**If you see errors:**  
-- Confirm `(venv)` is visible in the terminal.  
-- Upgrade pip, then try again:
->python -m pip install --upgrade pip
->pip install -r requirements.txt
+### 3. Frontend
 
-## GitHub Repository Structure
+```bash
+cd frontend
+npm install
+```
 
-**Branches (where code lives):**
-- **Main** → The stable/best version of the project. We keep this clean.
-- **Dev** → Team working area (a copy of Main we build on before updates go to Main).
-- **your-name-branch** → **Your** personal workspace. Do your changes here.  
-  > Need another branch? Please ask the lead first.
+---
 
-**Key files and folders (what they mean):**
-- **`venv/`** → Your local **v**irtual **env**ironment (installed Python libraries for this project).  
-  *Stays on your computer; not uploaded to GitHub.*
-- **`.gitignore`** → A list of files/folders **not** to upload (e.g., `venv/`, large data, secrets).
-- **`README.md`** → This setup/guide file. Start here when opening the repo.
-- **`requirements.txt`** → The project’s Python libraries **with versions** so everyone installs the same set.
-- **`*.py` files** → Python source code you’ll edit and run.
+## Running the System
 
-## TUTORIALS & RESOURCES
+Open two terminals from the project root.
 
-## Topics & Concepts to Familiarize Yourself With
+**Terminal 1 — Backend**
 
-- Python Syntax (Variables, Whitespace, Data Types, Loops)
-- Python Functions & Object-Oriented Programming (OOP)
-- Data Science & Machine Learning Libraries (Pandas, Numpy, Matplotlib, Seaborn, Scipy, Scikit-learn)
-- More Advanced AI/ML Libraries (PyTorch & TensorFlow)
-- Git & GitHub (Tree & Branch Structure, Basic Commands, Version Control)
+```bash
+python -m uvicorn backend.api.main:app --reload
+```
 
-## Practice Files
+The API will be available at `http://localhost:8000`.
 
-In the subfolder named "practice_notebooks" there are some Jupyter notebooks available. The answers are filled in.
+**Terminal 2 — Frontend**
 
-## Beginner Python Tutorial
+```bash
+cd frontend
+npm run dev
+```
 
-Video Link:  
-https://www.youtube.com/watch?v=kqtD5dpn9C8
+The dashboard will be available at `http://localhost:5173`.
 
-## Basic Data Science Python Libraries Tutorial
+> Make sure all four Arduino boards are powered on and advertising over BLE before starting the backend. The backend scans for and connects to them automatically on startup.
 
-Video Link (NumPy):  
-https://www.youtube.com/watch?v=pJoYVxgI840  
+---
 
-Video Link (Basic Machine Learning):  
-https://www.youtube.com/watch?v=29ZQ3TDGgRQ  
+## Using the Dashboard
+
+1. Navigate to `http://localhost:5173`
+2. Select a patient from the **Select Patient** screen
+3. The **Patient Dashboard** shows live knee angle and EMG for both legs side by side
+4. Click **Calibrate** to zero the knee angle reference (stand with legs straight)
+5. Click **Start Recording** to begin a session
+6. Click **Stop Recording** to end the session — the data is saved and the ML model runs automatically, adding a new Recovery Index data point
+7. Switch to **Recovery Outlook** to view the trend over time
+
+---
+
+## ML Pipeline
+
+The machine learning pipeline lives in `backend/src/model/`. It can be run independently of the live system.
+
+### Training
+
+```bash
+python -m backend.src.model.train
+```
+
+Trains an `IsolationForest` on synthetic recovery sessions and saves the model artifact to `backend/src/model/artifacts/isolation_forest_knee.joblib`.
+
+### Inference
+
+```bash
+python -m backend.src.model.infer
+```
+
+Runs the model on all sessions in `data/sessions/` and outputs a Recovery Index (0–100%) per session.
+
+### Generating Synthetic Data
+
+```bash
+python -m backend.src.model.synthetic
+```
+
+Generates synthetic injured/recovery sessions from healthy baseline CSVs for model training and evaluation.
+
+---
+
+## File Structure
+
+```
+WEBMC-TNBC/
+├── README.md                        # This file
+├── requirements.txt                 # Python dependencies
+│
+├── frontend/                        # React + TypeScript web app
+│   ├── src/
+│   │   ├── App.tsx                  # Routing (Home → SelectPatient → PatientDashboard)
+│   │   ├── main.tsx                 # Entry point
+│   │   ├── screens/
+│   │   │   ├── Home.tsx             # Landing page
+│   │   │   ├── SelectPatient.tsx    # Patient selection
+│   │   │   └── PatientDashboard.tsx # Main clinician dashboard
+│   │   └── components/
+│   │       ├── KneeAngleViz.tsx     # Animated real-time knee angle diagram
+│   │       ├── EMGChart.tsx         # Live EMG envelope time series chart
+│   │       └── RecoveryOutlookChart.tsx  # Recovery Index trend over time
+│   ├── package.json
+│   └── vite.config.ts
+│
+├── backend/
+│   ├── api/
+│   │   ├── main.py                  # FastAPI app — BLE connections, WebSocket endpoints, REST API
+│   │   └── services/
+│   │       └── imu_stream.py        # IMU/EMG pairing service, recording buffer, calibration
+│   └── src/
+│       ├── ino/
+│       │   ├── central/
+│       │   │   └── central.ino      # Arduino sketch — femur board (IMU + EMG)
+│       │   ├── peripheral/
+│       │   │   └── peripheral.ino   # Arduino sketch — tibia board (IMU only)
+│       └── model/
+│           ├── config.py            # Shared paths and constants
+│           ├── features.py          # Feature extraction from session CSVs (~35 features)
+│           ├── train.py             # IsolationForest training script
+│           ├── infer.py             # Inference — maps session to Recovery Index
+│           ├── evaluate.py          # Evaluates model on synthetic recovery trajectories
+│           ├── synthetic.py         # Synthetic session generator for training data
+│           └── artifacts/
+│               └── isolation_forest_knee.joblib  # Trained model artifact
+│
+└── data/
+    ├── sessions/                    # Real recorded sessions (CSV), one file per session
+    └── synthetic_sessions/          # Synthetically generated sessions for model training
+```
+
+---
+
+## API Reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Device connection and calibration status |
+| `GET` | `/knee-angle/latest` | Latest knee angle reading |
+| `POST` | `/calibration/zero` | Zero the current pose as reference |
+| `POST` | `/calibration/reset` | Clear calibration offsets |
+| `POST` | `/session/start` | Begin recording a session |
+| `POST` | `/session/stop` | Stop recording, save CSV, run inference |
+| `GET` | `/recovery/history` | All Recovery Index scores over time |
+| `WS` | `/ws/knee-angle` | Real-time knee angle stream |
+| `WS` | `/ws/imu-raw` | Raw IMU event stream |
